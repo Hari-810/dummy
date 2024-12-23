@@ -73,13 +73,16 @@ class Planner(Role):
         self.recipient_alias_set = set([alias for alias, _ in self.workers.items()])
 
         self.planner_post_translator = post_translator
-        print(f"DEBUG: Reading YAML data from {self.config.prompt_file_path}")
+
+        print(f"#### DEBUG: Reading response JSON schema from {self.config.prompt_file_path}")
         self.prompt_data = read_yaml(self.config.prompt_file_path)
-        print("DEBUG: Parsing instruction template and JSON schema")
+
+        print(f"#### DEBUG: Parsing JSON schema from YAML data")
         self.instruction_template = self.prompt_data["instruction_template"]
 
         self.response_json_schema = json.loads(self.prompt_data["response_json_schema"])
-        print("DEBUG: Response JSON schema loaded successfully")
+
+       
         # restrict the send_to field to the recipient alias set
         self.response_json_schema["properties"]["response"]["properties"]["send_to"]["enum"] = list(
             self.recipient_alias_set,
@@ -87,7 +90,8 @@ class Planner(Role):
 
         self.ask_self_cnt = 0
         self.max_self_ask_num = 3
-        print(f"DEBUG: Reading compression prompt template from {self.config.compression_prompt_path}")
+
+        print(f"#### DEBUG: Reading compression prompt JSON content")
         self.round_compressor = round_compressor
         self.compression_prompt_template = read_yaml(self.config.compression_prompt_path)["content"]
 
@@ -222,6 +226,7 @@ class Planner(Role):
             chat_history += conv_example_in_prompt
 
         summary = None
+        print(f"#### DEBUG: Compressing JSON content with compression prompt")
         if self.config.prompt_compression and self.round_compressor is not None:
             summary, rounds = self.round_compressor.compress_rounds(
                 rounds,
@@ -247,15 +252,22 @@ class Planner(Role):
         prompt_log_path: Optional[str] = None,
         **kwargs: ...,
     ) -> Post:
+        
+        print(f"DEBUG: Fetching role rounds from memory for role {self.alias}")
+
         rounds = memory.get_role_rounds(role=self.alias)
         assert len(rounds) != 0, "No chat rounds found for planner"
 
+        print(f"DEBUG: Fetching user query from the last round")
         user_query = rounds[-1].user_query
 
         self.tracing.set_span_attribute("user_query", user_query)
         self.tracing.set_span_attribute("use_experience", self.config.use_experience)
 
+        print("#### DEBUG: Reading experience data from JSON file for user query")
         self.role_load_experience(query=user_query, memory=memory)
+
+        print("#### DEBUG: Reading examples from JSON file for role set")
         self.role_load_example(role_set=set(self.recipient_alias_set) | {self.alias, "User"}, memory=memory)
 
         post_proxy = self.event_emitter.create_post_proxy(self.alias)
@@ -324,12 +336,14 @@ class Planner(Role):
                 },
             )
 
+            print(" #### DEBUG: Writing raw LLM output to JSON format for processing")
             self.planner_post_translator.raw_text_to_post(
                 post_proxy=post_proxy,
                 llm_output=stream_filter(llm_stream),
                 validation_func=check_post_validity,
             )
 
+            print("#### DEBUG: Writing plan to JSON shared memory entry")
             plan = post_proxy.post.get_attachment(type=AttachmentType.plan)[0]
             bulletin_message = f"\n====== Plan ======\nI have drawn up a plan:\n{plan}\n==================\n"
             post_proxy.update_attachment(
@@ -347,10 +361,14 @@ class Planner(Role):
             self.tracing.set_span_status("ERROR", str(e))
             self.tracing.set_span_exception(e)
             post_proxy.error(f"Failed to parse LLM output due to {str(e)}")
+
+            print(" #### DEBUG: Writing invalid LLM response to JSON attachment")
             post_proxy.update_attachment(
                 "".join(llm_output),
                 AttachmentType.invalid_response,
             )
+
+            print("#### DEBUG: Writing revise message to JSON attachment")
             post_proxy.update_attachment(
                 f"Your JSON output has errors. {str(e)}."
                 # "The output format should follow the below format:"
@@ -366,6 +384,8 @@ class Planner(Role):
                 post_proxy.update_send_to(self.alias)
                 self.ask_self_cnt += 1
         if prompt_log_path is not None:
+
+            print(" #### DEBUG: Writing prompt log to JSON file")
             self.logger.dump_prompt_file(chat_history, prompt_log_path)
 
         reply_post = post_proxy.end()
