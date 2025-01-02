@@ -1145,3 +1145,4 @@ def generate_intent_catalog(plugin_name,plugin_description):
 
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=500)
+
