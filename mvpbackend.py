@@ -2,10 +2,11 @@ import mimetypes
 from urllib import request
 from django.shortcuts import render
 from django.http import HttpResponse , JsonResponse
-from rest_framework.decorators import api_view
+from rest_framework.decorators import api_view, renderer_classes
 from rest_framework import status
 from typing import List, Dict
 import os
+import shutil
 import yaml
 import csv
 from django.shortcuts import render
@@ -41,10 +42,17 @@ sys.path.append(repo_path)
 from taskweaver.app.app import TaskWeaverApp  # Import TaskWeaverApp
 from taskweaver.memory.attachment import AttachmentType
 from taskweaver.memory.type_vars import RoleName
-from taskweaver.module.event_emitter import PostEventType, RoundEventType, SessionEventHandlerBase
+from taskweaver.module.event_emitter import PostEventType, RoundEventType, SessionEventHandlerBase,SessionEventHandler,TaskWeaverEvent
 from taskweaver.session.session import Session
 from typing import Any, Dict, List, Optional, Tuple, Union
-
+from taskweaver.code_interpreter import code_executor
+from taskweaver.memory.plugin import set_plugin_folder
+from azure.identity import DefaultAzureCredential
+from langchain_openai import AzureChatOpenAI
+from azure.core.credentials import AccessToken
+from ruamel.yaml import YAML
+import logging as log
+from django.http import StreamingHttpResponse
 project_path = os.path.join(repo_path, "project")
 app = TaskWeaverApp(app_dir=project_path, use_local_uri=True)
 atexit.register(app.stop)
@@ -54,8 +62,57 @@ app_session_dict: Dict[str, Session] = {}
 user_session_id = ""
 app_session_dict[user_session_id] = app.get_session()
 session=""
+python_code_content=""
+yaml_code_content=""
 
+plugin_name=""
+plugin_description=""
 
+code_executor.set_plugin_folder("adminplugins")
+set_plugin_folder("adminplugins")
+
+admin_project_path = os.path.join(repo_path, "project")
+adminapp = TaskWeaverApp(app_dir=admin_project_path, use_local_uri=True)
+print("$"*15,admin_project_path)
+atexit.register(adminapp.stop)
+admin_session_dict: Dict[str, Session] = {}
+admin_session_id = ""
+admin_session_dict[admin_session_id] = adminapp.get_session()
+adminsession=""
+
+code_executor.set_plugin_folder("draftplugins")
+set_plugin_folder("draftplugins")
+
+draft_project_path = os.path.join(repo_path, "project")
+draftapp = TaskWeaverApp(app_dir=draft_project_path, use_local_uri=True)
+print("$"*15,draft_project_path)
+atexit.register(draftapp.stop)
+draft_session_dict: Dict[str, Session] = {}
+draft_session_id = ""
+draft_session_dict[draft_session_id] = draftapp.get_session()
+draftsession=""
+from rest_framework.renderers import BaseRenderer
+
+# class ServerSentEventRenderer(BaseRenderer):
+#     media_type = 'text/event-stream'
+#     format = 'txt'
+
+#     def render(self, data, accepted_media_type=None, renderer_context=None):
+#         return data
+
+# @api_view(['GET'])
+# # Add the custom renderer to the view
+# @renderer_classes([ServerSentEventRenderer])
+# def chatgpt(request):
+#     def event_stream():
+#         for i in range(0,10):
+#             data =1
+#             yield f'data: {data}\n\n'
+
+#     response = StreamingHttpResponse(event_stream(), content_type="text/event-stream")
+#     response['X-Accel-Buffering'] = 'no'  # Disable buffering in nginx
+#     response['Cache-Control'] = 'no-cache'  # Ensure clients don't cache the data
+#     return response
 
 @api_view(['GET'])
 def IsAuthorize(request):
@@ -150,12 +207,13 @@ def list_plugins(request):
        
         with open(file_path, 'r') as file:
             data = yaml.safe_load(file)
-       
+
         plugin_name = yaml_file[:-5]
         description = data.get('description', 'No description available')
         enabled_status = data.get('enabled', 'No enabled status available')
         example = data.get('examples', 'No example available')
         custom_modification= data.get('custom_modification', False)
+        plugin_Status= data.get('isdeleted',False)
         Endpoint = data["configurations"].get('endpoint_url', 'No Endpoint available')
         DEPLOYMENT_NAME= data["configurations"].get('deployment_name', 'No deployment name available')
         
@@ -178,7 +236,8 @@ def list_plugins(request):
             "enabled_status": enabled_status,
             "custom_modification": custom_modification,
             "Endpoint":Endpoint,
-            "DEPLOYMENT_NAME": DEPLOYMENT_NAME
+            "DEPLOYMENT_NAME": DEPLOYMENT_NAME,
+            "Is_deleted" : plugin_Status
         }
         plugins.append(plugin_info)
 
@@ -199,47 +258,142 @@ def list_plugins(request):
         writer = csv.DictWriter(csv_file, fieldnames=[
             "plugin_name", "description", "example", "parameter_description",
             "return_description", "enabled_status" ,"custom_modification",
-        "Endpoint", "DEPLOYMENT_NAME"
+        "Endpoint", "DEPLOYMENT_NAME","Is_deleted"
         ])
         writer.writeheader()
         # print(existing_plugins.values())
         # Write all plugins, including modified rows, back to the CSV
         for plugin in existing_plugins.values():
-            
+            print(plugin)
             writer.writerow(plugin)
    
     # return plugins
     return JsonResponse(plugins ,safe=False)
 
+@api_view(['GET'])
+def list_adminplugins(request):
 
+    """
+    Retrieves a list of plugins names from the admin plugins folder
+    Returns:
+         A list of dictionaries, each containing:
+            `plugin_name` (str): Name of the plugin file without extension
+    """ 
+    plugins_folder_path = os.path.abspath(os.path.join(os.getcwd(), '..', 'project', 'adminplugins'))
+    yaml_files = [f for f in os.listdir(plugins_folder_path) if f.endswith('.yaml') and os.path.isfile(os.path.join(plugins_folder_path, f))]
+    plugins=[]
+    for yaml_file in yaml_files:
+        plugin_name = yaml_file[:-5]
+        plugin_info = {
+            "plugin_name": plugin_name,
+        }
+        plugins.append(plugin_info)
+    return JsonResponse(plugins ,safe=False)
+
+@api_view(['GET'])
+def list_draftplugins(request):
+
+    """
+    Retrieves a list of plugins from the plugins folder, including their names,
+    descriptions, examples, parameters, return values, and enabled statuses.
+   
+    This function reads each `.yaml` file in the plugins folder and extracts
+    details such as `plugin_name`, `description`, `example`, `parameters`,
+    `return values`, and `enabled_status`. If a field is missing, it provides a
+    default message.
+   
+    Returns:
+        A list of dictionaries, each containing:
+        - `plugin_name` (str): Name of the plugin file without extension
+        - `description` (str): Plugin description or a default message
+        - `example` (str): Example usage of the function
+        - `parameter_description` (str): Description of parameters
+        - `return_description` (str): Description of return values
+        - `enabled_status` (str): Enabled status
+    """ 
+    plugins_folder_path = os.path.abspath(os.path.join(os.getcwd(), '..', 'project', 'draftplugins'))
+ 
+    # Get all .yaml files from the plugins folder
+    yaml_files = [f for f in os.listdir(plugins_folder_path) if f.endswith('.yaml') and os.path.isfile(os.path.join(plugins_folder_path, f))]
+    plugins = []
+    for yaml_file in yaml_files:
+        file_path = os.path.join(plugins_folder_path, yaml_file)
+       
+        with open(file_path, 'r') as file:
+            data = yaml.safe_load(file)
+
+        plugin_name = yaml_file[:-5]
+        description = data.get('description', 'No description available')
+        enabled_status = data.get('enabled', 'No enabled status available')
+        example = data.get('examples', 'No example available')
+        custom_modification= data.get('custom_modification', False)
+        plugin_Status= data.get('isdeleted',False)
+        Endpoint = data["configurations"].get('endpoint_url', 'No Endpoint available')
+        DEPLOYMENT_NAME= data["configurations"].get('deployment_name', 'No deployment name available')
+        
+
+        # Extract parameter descriptions and return descriptions
+        parameter_description = ""
+        if 'parameters' in data:
+            parameter_description = "; ".join([f"{param['name']} ({param['type']}): {param.get('description', 'No description')}" for param in data['parameters']])
+        return_description = ""
+        if 'returns' in data:
+            return_description = "; ".join([f"{ret['name']} ({ret['type']}): {ret.get('description', 'No description')}" for ret in data['returns']])
+ 
+        # Add plugin details to the plugins list
+        plugin_info = {
+            "plugin_name": plugin_name,
+            "description": description,
+            "example": example,
+            "parameter_description": parameter_description,
+            "return_description": return_description,
+            "enabled_status": enabled_status,
+            "custom_modification": custom_modification,
+            "Endpoint":Endpoint,
+            "DEPLOYMENT_NAME": DEPLOYMENT_NAME,
+            "Is_deleted" : plugin_Status
+        }
+        plugins.append(plugin_info)
+    return JsonResponse(plugins ,safe=False)
 
 @api_view(['POST'])
 def plugin_enable(request):
     data= request.data
     plugin_name=data.get('plugin_name')
     plugin_state=data.get('state')
+    print(plugin_state)
+    if not plugin_name:
+        return HttpResponse("Plugin name is required.", content_type="text/plain", status=status.HTTP_400_BAD_REQUEST)
      # Define the relative path to the plugins folder
     # plugins_folder_path =
     plugins_folder =  os.path.abspath(os.path.join(os.getcwd(), '..', 'project', 'plugins'))
-
+ 
     yaml_file = os.path.join(plugins_folder, plugin_name) + ".yaml"
-    # Load the YAML file
-    with open(yaml_file , 'r') as file:
-        data = yaml.safe_load(file)
-    # Modify the YAML data 
-    
-    if plugin_state == True :
-        data['enabled'] = True
-    else:
-        data['enabled'] = False
-
-    # Save the modified YAML data back to the file
+   
+    # Ensure the file exists
+    if not os.path.exists(yaml_file):
+        return HttpResponse(f"YAML file for plugin '{plugin_name}' not found.", content_type="text/plain", status=status.HTTP_404_NOT_FOUND)
+    # # Load the YAML file
+    # with open(yaml_file , 'r') as file:
+    #     data = yaml.safe_load(file)
+    # # Modify the YAML data
+   
+   
+    # Load the YAML file with ruamel.yaml
+    yaml = YAML()
+    yaml.preserve_quotes = True  # Ensure quotes in the original file are preserved
+    with open(yaml_file, 'r') as file:
+        config = yaml.load(file)
+   
+    # Modify the 'enabled' property based on the state
+        config['enabled'] = bool(plugin_state)
+        print(config['enabled'])
+    # Save the modified YAML data back to the file without altering its structure
     with open(yaml_file, 'w') as file:
-        yaml.dump(data, file, default_flow_style=False)
-
+        yaml.dump(config, file)
+ 
     responce_text="YAML file updated successfully."
     return  HttpResponse (responce_text, content_type="text/plain", status= status.HTTP_200_OK)
-
 
 
 @api_view(['GET'])
@@ -447,6 +601,8 @@ def get_yaml_files_with_key_value(request):
 @api_view(['POST'])
 def create_session(request):
     try:
+        code_executor.set_plugin_folder("plugins")
+        set_plugin_folder("plugins")
         global user_session_id
         global app_session_dict
         global session
@@ -458,9 +614,45 @@ def create_session(request):
         return Response({'session_id': session.session_id, 'status': 'Session created successfully'}, status=status.HTTP_201_CREATED)
     except Exception as e:
         return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
-    finally:
-        app.stop()  # Ensure to stop the app when done (optional based on your design)
+
+@api_view(['POST'])
+def create_draftplugin_session(request):
+    try:
+        code_executor.set_plugin_folder("draftplugins")
+        set_plugin_folder("draftplugins")
+        global  draft_session_id
+        global draft_session_dict
+        global draftsession
+        draft_session_id = request.data['user']
+        draft_session_dict[draft_session_id] = draftapp.get_session()
+        draftsession=draft_session_dict[draft_session_id]
+        draftsession_cwd_path = draftsession.execution_cwd
+        draftsession.event_emitter
+        return Response({'session_id': draftsession.session_id, 'status': 'Session created successfully'}, status=status.HTTP_201_CREATED)
+    except Exception as e:
+        return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
  
+
+@api_view(['POST'])
+def create_admin_session(request):
+    try:
+        code_executor.set_plugin_folder("adminplugins")
+        set_plugin_folder("adminplugins")
+        global admin_session_id 
+        global admin_session_dict
+        global adminsession 
+        
+        admin_session_id = request.data['user']
+        admin_session_dict[admin_session_id] = adminapp.get_session()
+        adminsession=admin_session_dict[admin_session_id]
+        
+        adminsession_cwd_path = adminsession.execution_cwd
+        adminsession.event_emitter
+        return Response({'session_id': adminsession.session_id, 'status': 'Admin Session created successfully'}, status=status.HTTP_201_CREATED)
+    except Exception as e:
+        return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+ 
+
 def update_YAML_files(plugin_name, updates):
     """Update the YAML file  based on the provided JSON string."""
 
@@ -496,9 +688,174 @@ def update_YAML_files(plugin_name, updates):
     else:
         print(f"YAML file not found: {yaml_file_path}")
 
+
+
+class ConsoleEventHandler(SessionEventHandler):
+    def handle(self, event: TaskWeaverEvent):
+        print(event.t, event.msg)
 @api_view(['POST'])
 def SendMessage(request):
     global session
+    encoded_blob=''
+    img_path=''
+    data_url=''
+    mime_type=''
+    file_name=''
+    user_msg_content=''
+    serializer = BlobDataSerializer(data=request.data)
+    prompt=request.data["prompt"] 
+    if serializer.is_valid():
+        encoded_blob = serializer.validated_data['blob_data']
+        File_name = serializer.validated_data['File_name']
+        try:
+            decoded_data =base64.b64decode(encoded_blob)
+            file_path = os.path.join('..', 'Temp_file', File_name)
+            
+            os.makedirs(os.path.dirname(file_path), exist_ok=True)
+
+            with open(file_path, 'wb') as f:
+                f.write(decoded_data)
+        
+        except Exception as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        file_path=os.path.realpath("../Temp_file/"+File_name)
+        files_to_send = [{
+            "name": File_name,
+            "path": file_path
+        }] 
+    try:
+        if serializer.is_valid():
+            res= session.send_message(message=prompt,event_handler=ConsoleEventHandler(),files = files_to_send)
+        elif prompt:
+            res= session.send_message(message=prompt,event_handler=ConsoleEventHandler())
+        artifact_paths = [
+            p
+            for p in res.post_list
+            for a in p.attachment_list
+            if a.type == AttachmentType.artifact_paths
+            for p in a.content
+        ]
+        session_cwd_path = session.execution_cwd
+        print(session_cwd_path)
+        session.event_emitter
+        # print(res.post_list)
+        for post in [p for p in res.post_list if p.send_to == "User"]:
+            files: List[Tuple[str, str]] = []
+            if len(artifact_paths) > 0:
+                for file_path in artifact_paths:
+                    img_path=file_path
+                    file_name = os.path.basename(file_path)
+                    files.append((file_name, file_path))
+
+            # Extract the file path from the message and display it
+            user_msg_content = post.message
+            pattern = r"(!?)\[(.*?)\]\((.*?)\)"
+            matches = re.findall(pattern, user_msg_content)
+            for match in matches:
+                img_prefix, file_name, file_path = match
+                if(img_path==''):
+                    img_path=session_cwd_path+"\\"+file_path
+                files.append((file_name, file_path))
+                user_msg_content = user_msg_content.replace(
+                    f"{img_prefix}[{file_name}]({file_path})",
+                    file_name,
+                )
+                with open(img_path, 'rb') as file: 
+                    file_data = file.read()
+                encoded_blob = base64.b64encode(file_data).decode('utf-8')
+                mime_type, _ = mimetypes.guess_type(img_path)
+                data_url = f'data:{mime_type};base64,{encoded_blob}'
+        
+    except Exception as e:
+        return Response({'error': str(e)})
+    return JsonResponse({'content':user_msg_content,'encoded_blob':data_url,'file_type':mime_type,'file_name':file_name},safe=False)
+
+@api_view(['POST'])
+def draftPluginSendMessage(request):
+    global draftsession
+    encoded_blob=''
+    img_path=''
+    data_url=''
+    mime_type=''
+    file_name=''
+    user_msg_content=''
+    serializer = BlobDataSerializer(data=request.data)
+    prompt=request.data["prompt"] 
+    if serializer.is_valid():
+        encoded_blob = serializer.validated_data['blob_data']
+        File_name = serializer.validated_data['File_name']
+        try:
+            decoded_data =base64.b64decode(encoded_blob)
+            file_path = os.path.join('..', 'Temp_file', File_name)
+            
+            os.makedirs(os.path.dirname(file_path), exist_ok=True)
+
+            with open(file_path, 'wb') as f:
+                f.write(decoded_data)
+        
+        except Exception as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        file_path=os.path.realpath("../Temp_file/"+File_name)
+        files_to_send = [{
+            "name": File_name,
+            "path": file_path
+        }] 
+    try:
+        if serializer.is_valid():
+            res= draftsession.send_message(message=prompt,event_handler=ConsoleEventHandler(),files = files_to_send)
+        elif prompt:
+            res= draftsession.send_message(message=prompt,event_handler=ConsoleEventHandler())
+        artifact_paths = [
+            p
+            for p in res.post_list
+            for a in p.attachment_list
+            if a.type == AttachmentType.artifact_paths
+            for p in a.content
+        ]
+        draftsession_cwd_path = draftsession.execution_cwd
+        print(draftsession_cwd_path)
+        draftsession.event_emitter
+        # print(res.post_list)
+        for post in [p for p in res.post_list if p.send_to == "User"]:
+            files: List[Tuple[str, str]] = []
+            if len(artifact_paths) > 0:
+                for file_path in artifact_paths:
+                    img_path=file_path
+                    file_name = os.path.basename(file_path)
+                    files.append((file_name, file_path))
+
+            # Extract the file path from the message and display it
+            user_msg_content = post.message
+            pattern = r"(!?)\[(.*?)\]\((.*?)\)"
+            matches = re.findall(pattern, user_msg_content)
+            for match in matches:
+                img_prefix, file_name, file_path = match
+                if(img_path==''):
+                    img_path=draftsession_cwd_path+"\\"+file_path
+                files.append((file_name, file_path))
+                user_msg_content = user_msg_content.replace(
+                    f"{img_prefix}[{file_name}]({file_path})",
+                    file_name,
+                )
+                with open(img_path, 'rb') as file: 
+                    file_data = file.read()
+                encoded_blob = base64.b64encode(file_data).decode('utf-8')
+                mime_type, _ = mimetypes.guess_type(img_path)
+                data_url = f'data:{mime_type};base64,{encoded_blob}'
+        
+    except Exception as e:
+        return Response({'error': str(e)})
+    return JsonResponse({'content':user_msg_content,'encoded_blob':data_url,'file_type':mime_type,'file_name':file_name},safe=False)
+
+
+
+@api_view(['POST'])
+def adminSendMessage(request):
+    global adminsession
+    global yaml_code_content
+    global python_code_content
+    global plugin_name
+    global plugin_description
     encoded_blob=''
     img_path=''
     data_url=''
@@ -527,9 +884,9 @@ def SendMessage(request):
         }] 
     try:
         if serializer.is_valid():
-            res= session.send_message(message=prompt,event_handler=None,files = files_to_send)
+            res= adminsession.send_message(message=prompt,event_handler=None,files = files_to_send)
         elif prompt:
-            res= session.send_message(message=prompt)
+            res= adminsession.send_message(message=prompt)
         artifact_paths = [
             p
             for p in res.post_list
@@ -537,8 +894,8 @@ def SendMessage(request):
             if a.type == AttachmentType.artifact_paths
             for p in a.content
         ]
-        session_cwd_path = session.execution_cwd
-        session.event_emitter
+        adminsession_cwd_path = adminsession.execution_cwd
+        adminsession.event_emitter
         print(res.post_list)
         for post in [p for p in res.post_list if p.send_to == "User"]:
             files: List[Tuple[str, str]] = []
@@ -550,22 +907,241 @@ def SendMessage(request):
 
             # Extract the file path from the message and display it
             user_msg_content = post.message
-            pattern = r"(!?)\[(.*?)\]\((.*?)\)"
-            matches = re.findall(pattern, user_msg_content)
-            for match in matches:
-                img_prefix, file_name, file_path = match
-                if(img_path==''):
-                    img_path=session_cwd_path+"\\"+file_path
-                files.append((file_name, file_path))
-                user_msg_content = user_msg_content.replace(
-                    f"{img_prefix}[{file_name}]({file_path})",
-                    file_name,
-                )
-                with open(img_path, 'rb') as file: 
-                    file_data = file.read()
-                encoded_blob = base64.b64encode(file_data).decode('utf-8')
-                mime_type, _ = mimetypes.guess_type(img_path)
-                data_url = f'data:{mime_type};base64,{encoded_blob}'
+        #     pattern = r"(!?)\[(.*?)\]\((.*?)\)"
+        #     matches = re.findall(pattern, user_msg_content)
+        #     for match in matches:
+        #         img_prefix, file_name, file_path = match
+        #         if(img_path==''):
+        #             img_path=adminsession_cwd_path+"\\"+file_path
+        #         files.append((file_name, file_path))
+        #         user_msg_content = user_msg_content.replace(
+        #             f"{img_prefix}[{file_name}]({file_path})",
+        #             file_name,
+        #         )
+        #         with open(img_path, 'rb') as file: 
+        #             file_data = file.read()
+        #         encoded_blob = base64.b64encode(file_data).decode('utf-8')
+        #         mime_type, _ = mimetypes.guess_type(img_path)
+        #         data_url = f'data:{mime_type};base64,{encoded_blob}'
+        python_pattern = r'```python\n(.*?)```'
+        yaml_pattern = r'```yaml\n(.*?)```'
+        python_code = re.search(python_pattern, user_msg_content, re.DOTALL)
+        yaml_code = re.search(yaml_pattern, user_msg_content, re.DOTALL)
+        print(plugin_name in user_msg_content)
+        print("successfully created" in user_msg_content)
+        print(os.path.realpath("../project/"))
+        if(python_code_content==""):
+            python_code_content = python_code.group(1).strip() if python_code else ""
+            yaml_code_content = yaml_code.group(1).strip() if yaml_code else ""
+            if(yaml_code_content!=""):
+                match=re.search(r'(plugin_name|name):\s*(\S+)', yaml_code_content)
+                plugin_description_match=re.search(r'(plugin_description|description):\s*(\S+)', yaml_code_content)
+                if match:
+                    plugin_name = match.group(2)
+                    print(plugin_name)
+                if plugin_description_match:
+                    plugin_description = plugin_description_match.group(2)
+                    print(plugin_description)
+        elif ((plugin_name in user_msg_content or "new plugin" in user_msg_content) and "success" in user_msg_content and ("saved" in user_msg_content or "created" in user_msg_content or "submit" in user_msg_content)):
+            print("IN")
+            print(os.path.realpath("../project/draftplugins"))
+            with open(os.path.realpath("../project/draftplugins")+"/"+plugin_name+".py","w") as py_file:
+                py_file.write(python_code_content)
+            with open(os.path.realpath("../project/draftplugins")+"/"+plugin_name+".yaml", "w") as yaml_file:
+                yaml_file.write(yaml_code_content)
+            generate_intent_catalog(plugin_name,plugin_description)
+            yaml_code_content=""
+            python_code_content=""
+            plugin_name=""
+            plugin_description=""
+
     except Exception as e:
         return Response({'error': str(e)})
     return JsonResponse({'content':user_msg_content,'encoded_blob':data_url,'file_type':mime_type,'file_name':file_name},safe=False)
+
+
+@api_view(['POST'])
+def Delete_plugin(request):
+    Pulgin_delete=request.data.get('plugin_name')
+    plugins_folder_path = os.path.abspath(os.path.join(os.getcwd(), '..', 'project', 'plugins'))
+    pulgin_name=f"{Pulgin_delete}.yaml"
+    # target_key = 'isdeleted'
+    if not Pulgin_delete:
+            return Response({"error": "Filename is required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+    file_path = os.path.join(plugins_folder_path, pulgin_name)
+    try:
+        # Check if the file exists
+        if not os.path.exists(file_path):
+            return Response({"error": f"File {file_path} not found"}, status=status.HTTP_404_NOT_FOUND)
+        
+        # Load YAML file
+        with open(file_path, 'r') as file:
+            data = yaml.safe_load(file)
+            
+        # Update the target key
+        data["isdeleted"]= True
+        data["enabled"]= False
+        # Save the updated data back to the YAML file
+        with open(file_path, 'w') as file:
+            yaml.safe_dump(data, file, indent=4)
+    except Exception as e:
+        print(f"Unexpected error with {pulgin_name}: {e}")
+    except yaml.YAMLError as e:
+        print(f"Error reading {pulgin_name}: {e}")
+    return JsonResponse (data,safe=False )
+
+@api_view(['POST'])
+def approvePlugin(request):
+    Pulgin_delete=request.data.get('plugin_name')
+    approve_plugin=request.data.get('approve')
+    plugins_folder_path = os.path.abspath(os.path.join(os.getcwd(), '..', 'project', 'draftplugins'))
+    pulgin_name=f"{Pulgin_delete}.yaml"
+    py_name=f"{Pulgin_delete}.py"
+    # target_key = 'isdeleted'
+    if not Pulgin_delete:
+            return Response({"error": "Filename is required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+    file_path = os.path.join(plugins_folder_path, pulgin_name)
+    py_file_path=os.path.join(plugins_folder_path, py_name)
+    target_plugins_folder_path = os.path.abspath(os.path.join(os.getcwd(), '..', 'project', 'plugins'))
+    yaml_target_path=os.path.join(target_plugins_folder_path, pulgin_name)
+    py_target_path=os.path.join(target_plugins_folder_path, py_name)
+    try:
+        # Check if the file exists
+        if not os.path.exists(file_path):
+            return Response({"error": f"File {file_path} not found"}, status=status.HTTP_404_NOT_FOUND)
+        
+        # Load YAML file
+        if approve_plugin=="Approve":
+            shutil.copyfile(file_path, yaml_target_path)
+            shutil.copyfile(py_file_path, py_target_path)
+        with open(file_path, 'r') as file:
+            data = yaml.safe_load(file)
+            
+        # Update the target key
+        data["isdeleted"]= True
+        data["enabled"]= False
+        # Save the updated data back to the YAML file
+        with open(file_path, 'w') as file:
+            yaml.safe_dump(data, file, indent=4)
+    except Exception as e:
+        print(f"Unexpected error with {pulgin_name}: {e}")
+    except yaml.YAMLError as e:
+        print(f"Error reading {pulgin_name}: {e}")
+    return JsonResponse (data,safe=False )
+
+
+@api_view(['POST'])
+def update_packges(request):
+    if request.method == "POST":
+        try:
+            # Parse the JSON data from the request body
+            data = json.loads(request.body)
+            print(data)
+            # Validate input
+            if not isinstance(data, list) or not all("name" in pkg for pkg in data):
+                return JsonResponse({"error": "Invalid data format. Expected a list of {'name': ..., 'version': ... (optional)}."}, status=400)
+            
+            # Define file path for the CSV file
+            file_path = os.path.abspath(os.path.join(os.getcwd(), '..','requirements.txt'))
+            # Ensure the file exists before appending
+            if not os.path.exists(file_path):
+                open(file_path, "w").close()
+
+            # Read existing data to avoid duplicates
+            with open(file_path, mode="r") as file:
+                existing_lines = {line.strip() for line in file.readlines()}
+
+            # Prepare new lines to append
+            new_lines = []
+            for package in data:
+                name = package["name"]
+                version = package.get("version", None)
+                line = f"{name}>={version}" if version else name
+                if line not in existing_lines:  # Avoid duplicate entries
+                    new_lines.append(line)
+
+            # Append new lines to the file
+            with open(file_path, mode="a") as file:
+                for line in new_lines:
+                    file.write(f"{line}\n")
+
+            return JsonResponse({"message": "requirements.txt updated successfully", "file_path": file_path})
+
+        except json.JSONDecodeError:
+            return JsonResponse({"error": "Invalid JSON data."}, status=400)
+        except Exception as e:
+            return JsonResponse({"error": str(e)}, status=500)
+    else:
+        return JsonResponse({"error": "Only POST requests are allowed."}, status=405)
+
+def generate_intent_catalog(plugin_name,plugin_description):
+    # Load configuration from the file
+    config_file_path = os.path.abspath(os.path.join(os.getcwd(), '..', 'project', 'taskweaver_config.json'))
+    try:
+        with open(config_file_path, 'r') as config_file:
+            config = json.load(config_file)
+    except Exception as e:
+        return JsonResponse({"error": f"Failed to load configuration: {str(e)}"}, status=500)
+
+    # Extract necessary values from the config
+    api_base = config.get("llm.api_base")
+    api_version = config.get("llm.azure.api_version")
+    model_name = config.get("llm.model")
+    api_type = config.get("llm.api_type")
+
+    # Ensure parameters are valid numbers or set defaults
+    try:
+        temperature = float(config.get("llm.temperature", 0.7))
+        top_p = float(config.get("llm.top_p", 1.0))
+        frequency_penalty = float(config.get("llm.frequency_penalty", 0.0))
+        presence_penalty = float(config.get("llm.presence_penalty", 0.0))
+    except ValueError as e:
+        return JsonResponse({"error": f"Invalid parameter value: {str(e)}"}, status=400)
+
+    # Authenticate using DefaultAzureCredential
+    try:
+        
+        credential = DefaultAzureCredential()
+
+            # Prepare the prompt for LLM
+        prompt = f"""
+            Generate 20 possible intents for the given plugin. Only provide the intent names.
+
+            Plugin Name: {plugin_name}
+            Plugin Description: {plugin_description}
+            """
+        
+        
+        # Create the AzureChatOpenAI client
+        client = AzureChatOpenAI(
+            azure_endpoint=api_base,
+            openai_api_version=api_version,
+            deployment_name=model_name,
+            openai_api_type=api_type,
+            azure_ad_token_provider=lambda: credential.get_token("https://cognitiveservices.azure.com/.default").token,
+            temperature=temperature,
+            top_p=top_p,
+            frequency_penalty=frequency_penalty,
+            presence_penalty=presence_penalty,
+        )
+
+      
+        response = client(prompt)
+        
+        
+        intents=response.content.strip().split('\n')        
+        intent_string="\n".join(intents)
+        intent_file_path = os.path.abspath(os.path.join(os.getcwd(), '..', 
+                                'project', 'Essential_Documents','intent_routing','Intent catalogue.csv'))
+        
+        
+        
+        with open(intent_file_path ,'a', newline='', encoding='utf-8') as intent_file:
+            intent_file.write(f"{plugin_name},\"{intent_string}\"\n")
+
+        return JsonResponse({"response": intents}, status=200)
+
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=500)
