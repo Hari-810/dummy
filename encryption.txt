@@ -1,1 +1,714 @@
 
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+Shape 
+
+Deloitte Core – Encryption NET8 
+
+ 
+
+ 
+
+ 
+
+ 
+
+Document Control Information 
+
+Description 
+
+This document provides technical guidance on how to use Deloitte Core encryption libraries. 
+
+Practice 
+
+AAPS 
+
+Name of Standard / Product 
+
+Deloitte Core Encryption NET8 
+
+ 
+ 
+Version History 
+
+Version 
+
+Date 
+
+Additions/Modifications 
+
+Prepared/Revised by 
+
+8.0.0 
+
+04/08/2024 
+
+Created initial version (migrated to NET8) 
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+Approval History 
+
+Version 
+
+Date 
+
+Notes 
+
+Approved by/Reviewed by 
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+​​Table of Contents 
+
+​ 
+
+​ 
+
+​ 
+
+​ 
+
+​ 
+
+​ 
+
+​ 
+
+​ 
+
+​ 
+
+​ 
+
+​ 
+
+​ 
+
+​ 
+
+​ 
+
+​ 
+
+​ 
+
+​ 
+
+​ 
+
+​ 
+
+​ 
+
+​ 
+
+​ 
+
+​ 
+
+​​ 
+
+ 
+
+Overview 
+
+ 
+
+This document provides technical details on how to use Deloitte Core Encryption Library. This library is used to encrypted data at rest. It is a requirement for all AAPS solutions to use this library and encryption standard to encrypt all documents at rest. 
+
+ 
+
+ 
+
+Library 
+
+ 
+
+Install the following library from Deloitte NuGet store - Deloitte.Core.Encryption 
+
+The library (versions from 8.0.*) is available for NET8 only 
+
+ 
+
+ 
+
+Registering Crypto Manager, Key and IV Provider 
+
+ 
+
+Use dependency injection to register – 
+
+ 
+
+  services.AddSingleton<ICryptoIVProvider, MD5CryptoIVProvider>(); 
+
+  services.Configure<KeyVaultCryptoProviderSettings>(_configuration.GetSection("EncryptionConfig")); 
+
+  services.AddSingleton<ICryptoKeyProvider, KeyVaultCryptoKeyProvider>(); 
+
+  services.AddSingleton<ICryptoManager, CryptoManager>(); 
+
+ 
+
+Or you could alternatively use the following pattern –  
+
+CryptoManager cryptoManager = new CryptoManager( 
+
+    /*ICryptoKeyProvider*/ cryptoKeyProvider,  
+
+    /*ICryptoIVProvider*/ cryptoIVProvider,  
+
+    /*ILogger<CryptoManager>*/ logger  
+
+); 
+
+ 
+
+Contracts 
+
+ICryptoKeyProvider 
+
+Provides methods to get encryption key used in symmetric algorithm in bytes array form. 
+
+string GetCurrentKeyVersion(IEncryptionContext context) - returns the current version of settings by context. 
+
+IKeyData GetKeyData(IEncryptionContext context, string keyVersion) - returns an encryption key by context and specified version of settings. 
+
+IKeyData 
+
+IKeyData is a simple wrapper around bytes array. 
+
+public interface IKeyData 
+
+{ 
+
+    byte[] Key { get; } 
+
+} 
+
+     
+
+ICryptoIVProvider 
+
+Provides the method to get so called 'initialization vector' in bytes array form. 
+
+IIVData GetIVData(ivString) - returns initialization vector by string. Its behavior is like a hash-function. 
+
+IIVData 
+
+IIVData is a simple wrapper around bytes array. 
+
+public interface IIvData 
+
+{ 
+
+    byte[] IV { get; } 
+
+} 
+
+ 
+
+CryptoKeyProviderBase 
+
+An abstract class that provides a common functionality for Crypto key providers. 
+
+public abstract class CryptoKeyProviderBase<TContext> : ICryptoKeyProvider where TContext : IEncryptionContext 
+
+There are following predefined Crypto key providers implementation: 
+
+public class AppSettingsCryptoKeyProvider : CryptoKeyProviderBase<IEncryptionContext> to get data from App.config. 
+
+public class KeyVaultCryptoKeyProvider : CryptoKeyProviderBase<IEncryptionContext> to get data from Azure Key Vault. 
+
+I EncryptionContext 
+
+An interface for encapsulating context of container. Can be extended with additional properties for using in custom CryptoKeyProvider implementation. 
+
+ 
+
+First, includes only two properties: 
+
+public interface IEncryptionContext 
+
+{ 
+
+    int ContainerId { get; set; } 
+
+    string ContainerCode { get; set; } 
+
+} 
+
+ 
+
+ICryptoManager 
+
+Represents a set of methods to encrypt/decrypt streams/strings 
+
+public interface ICryptoManager 
+
+{ 
+
+    ValueTask<EncryptedContext<Stream>> GetEncryptedStreamContext(Stream source, IEncryptionContext context, string fileId, bool leaveOpen = false, CryptoStreamMode streamMode = CryptoStreamMode.Write); 
+
+     
+
+    ValueTask<EncryptedContext<string>> GetEncryptedStringContext(string source, IEncryptionContext context, string fileId); 
+
+     
+
+    ValueTask<Stream> GetDecryptedStream(Stream source, IEncryptionContext context, string fileId, int version); 
+
+     
+
+    ValueTask<string> GetDecryptedString(string source, IEncryptionContext context, string fileId, int version); 
+
+} 
+
+ 
+
+ 
+
+Providers 
+
+There is two CryptoKeyProviders that are responsed for getting right keey for encryptio/decryption. 
+And MD5 CryptoIvProvider that is responced for Initial Vector of encryption. 
+
+AppSettingsCryptoKeyProvider 
+
+This is a predefined CryptoKeyProvider which works with IConfiguration. It inherits CryptoKeyProviderBase<IEncryptionContext> and implements ICryptoKeyProvider as well. CryptoKeyProviderBase<IEncryptionContext> means that it's expected that context is ot type IEncryptionContext, that has ContainerId and ContainerCode. 
+
+Configuration file for one container code and different Id's should looks like: 
+
+{ 
+
+    "DeloitteCore": { 
+
+        "AppSettingsCryptoKeyProviderSettings": { 
+
+            "ContainerConfiguration_US_1": { // for containerCode = 'US' and containerId = 1 
+
+                "CurrentKeyVersion": 2, // must be any number greater then 0 
+
+                "Keys": { 
+
+                    "1": "q5TMQVUS4msZ6rhQqHRzzxrAFqk5EGJKZqK3gFStVv8nA1j3C8MMFLIoyg/Mp/V1", //example 
+
+                    "2": "n8G1PbnzVSCMc52AAcKCGQ+rG/rkqBB777GkN4F5jBaLZMJU38qb02uqJiaXmnq+" // example 
+
+                } 
+
+            }, 
+
+            //... 
+
+             "ContainerConfiguration_US_999": { // for containerCode = 'US' and containerId = 999 
+
+                "CurrentKeyVersion": 5, // must be any number greater then 0 
+
+                "Keys": { 
+
+                    "1": "q5TMQVUS4msZ6rhQqHRzzxrAFqk5EGJKZqK3gFStVv8nA1j3C8MMFLIoyg/Mp/V1", //example 
+
+                    "2": "q5TMQVUS4msZ6rhQqHRzzxrAFqk5EGJKZqK3gFStVv8nA1j3C8MMFLIoyg/Mp/V1" // example 
+
+                    "3": "q5TMQVUS4msZ6rhQqHRzzxrAFqk5EGJKZqK3gFStVv8nA1j3C8MMFLIoyg/Mp/V1", //example 
+
+                    "4": "q5TMQVUS4msZ6rhQqHRzzxrAFqk5EGJKZqK3gFStVv8nA1j3C8MMFLIoyg/Mp/V1", //example 
+
+                    "5": "n8G1PbnzVSCMc52AAcKCGQ+rG/rkqBB777GkN4F5jBaLZMJU38qb02uqJiaXmnq+" // example 
+
+                } 
+
+            } 
+
+        } 
+
+    } 
+
+} 
+
+ 
+
+For further, container multiplication - just add more sections ContainerConfiguration_<code>_<id> inside of AppSettingsCryptoKeyProviderSettings section. 
+Note: Keys may be different from container to container, and changes with versions. Or you can use same keys for different containers but all sections should present in configuration, there is no pattern matching for containers configuration. 
+
+KeyVaultCryptoKeyProvider 
+
+This class inherits CryptoKeyProviderBase class and used to get data from Azure Key Vault. 
+
+Instantiation 
+
+Shape 
+
+To create instance of this provider you can use constrictor: 
+
+public KeyVaultCryptoKeyProvider(IOptions<KeyVaultCryptoProviderSettings> config,   
+
+    ILoggerFactory loggerFactory, ICacheClientAsync? cacheClient = null) 
+
+ 
+
+That takes: 
+
+Configuration KeyVaultCryptoProviderSettings, from where take KeyVault Uri 
+
+ILoggerFactory to create logger for itself and ICacheClientAsync 
+
+Instance of ICacheClientAsync, that is optional. And, by default, creates CacheMemoryProvider 
+
+KeyVaultCryptoProviderSettings 
+
+Shape 
+
+public class KeyVaultCryptoProviderSettings 
+
+{ 
+
+    public string Uri { get; init; } = ""; 
+
+    public DefaultAzureCredentialOptions DefaultAzureCredentialOptions { get; set; } = new DefaultAzureCredentialOptions(); 
+
+    public int? CacheExpirationTimeHours { get; init; } = 4; 
+
+} 
+
+Uri - uses for connection to KeyVault. Authentication works though the DefaultAzureCredential , which can use a lot of Credential types. 
+DefaultAzureCredentialOptions - used on when DefaultAzureCredential creating. 
+CacheExpirationTimeHours - parameter for ICacheClientAsync. 
+
+ Configuration example 
+
+In DI should add  
+
+services.Configure<KeyVaultCryptoProviderSettings>(_configuration.GetSection("EncryptionConfig")) 
+
+ 
+
+And this “EncryptionConfig” section just should be in configuration file. 
+
+"EncryptionConfig": { 
+
+    "Uri": "__KEYVAULT_URI__", 
+
+    "DefaultAzureCredentialOptions": { // just Azure.Identity.DefaultAzureCredentialOptions object – so you can configure provider to any of possible auth types  
+
+      "ExcludeManagedIdentityCredential": true, // turning off MSI for local development 
+
+      "ExcludeVisualStudioCredential": false, // and turning on VisualStudio credentials 
+
+      "ManagedIdentityClientId": "_guid_value_", 
+
+      “CacheExpirationTimeHours": 2 // default value "4" 
+
+    } 
+
+  } 
+
+ 
+
+Fields of DefaultAzureCredentialOptions: 
+
+InteractiveBrowserTenantId – string, default values will get from EnvironmentVariables AZURE_TENANT_ID 
+
+SharedTokenCacheTenantId – string, default values will get from EnvironmentVariables AZURE_TENANT_ID 
+
+VisualStudioTenantId – string, default values will get from EnvironmentVariables AZURE_TENANT_ID 
+
+VisualStudioCodeTenantId – string, default values will get from EnvironmentVariables AZURE_TENANT_ID 
+
+SharedTokenCacheUsername – string, default values will get from EnvironmentVariables AZURE_USERNAME 
+
+InteractiveBrowserCredentialClientId – string, default is null 
+
+ManagedIdentityClientId – string, default values will get from EnvironmentVariables AZURE_CLIENT_ID * 
+
+ 
+
+ExcludeEnvironmentCredential – bool, default ‘false’ 
+
+ExcludeManagedIdentityCredential – bool, default ‘false’ 
+
+ExcludeSharedTokenCacheCredential – bool, default ‘true’ 
+
+ExcludeInteractiveBrowserCredential – bool, default ‘true’ 
+
+ExcludeAzureCliCredential – bool, default ‘false’ 
+
+ExcludeVisualStudioCredential – bool, default ‘false’ 
+
+ExcludeVisualStudioCodeCredential – bool, default ‘false’ 
+
+ExcludeAzurePowerShellCredential – bool, default ‘false’ 
+
+ 
+
+*Note: set this value if you need a different one from system assigned identity 
+
+MD5CryptoIvProvider 
+
+This class implements ICryptoIVProvider interface. Implements the following method: 
+
+public IIVData GetIVData(string ivString) 
+
+ 
+
+That gets a unique string, returns IVData instance that contains array of bytes (computed hash). 
+
+CryptoManager 
+
+Provides an encryption/decryption functionality. Implements ICryptoManager interface: 
+
+public EncryptedContext<Stream> GetEncryptedStream(Stream source, IEncryptionContext context, string fileId, bool leaveOpen = false, CryptoStreamMode streamMode = CryptoStreamMode.Write) - gets a stream to encrypt, returns an encrypted stream and a version of settings to encode. 
+
+public EncryptedContext<string> GetEncryptedString(string source, IEncryptionContext context, string fileId) - gets a string to encrypt, returns an encrypted string and a version of settings to encode. 
+
+public EncryptedContext<Stream> GetDecryptedStream(Stream source, IEncryptionContext context, string fileId, int version) - gets a stream to decrypt, returns a decrypted stream. 
+
+public EncryptedContext<string> GetDecryptedString(string source, IEncryptionContext context, string fileId, int version) - gets a string to decrypt, returns a decrypted string. 
+
+Where 
+
+source* is an original string or stream to encrypt/decrypt 
+
+context is any object that can be recognized and used by an instance of cryptoKeyProvider passed into the constructor. 
+
+fileId is an initialization vector used in symmetric encryption algorithm. Here it is a string which has to be used by an instance of cryptoIvProvider passed into the constructor. 
+
+version is a current version of settings that have been used while encrypting data and a version of settings to use in a decryption process. 
+
+streamMode - is a mode of returned stream, that can be used in further for encrypting stream to source stream if in Write mode, or encrypt source stream right in creation time if in Read mode (can be readed only once, because CryptoStream can't to seek ). 
+
+Note: * - it depends on streamMode. When enabled Read mode - then source is realy Source, and resulted stream is able to read. 
+But when streamMode is set to Write - source should be target, and need to be writable steam. returned stream will be also writable, and should be used likee "pipe", copy data from your Source into that "pipe", and you will get encrypted bytes right inside of your source stream after disposing orr flushing. 
+
+Initialization 
+
+Constructor is: 
+
+public CryptoManager(ICryptoKeyProvider cryptoKeyProvider, ICryptoIVProvider cryptoIvProvider, ILogger<CryptoManager> logger) 
+
+ 
+
+Encryption/Decryption 
+
+For encryption you should generate unique value for using as fileId, it may be file name or generated Guid 
+After encryption you should store generated fileId and returned result.Version because you will need this values to decrypt your file or string value. 
+
+Examples 
+
+Read mode 
+
+Shape 
+
+ 
+
+public async Task<UploadAsyncResult> UploadAsync( 
+
+            Stream uploadFileStream, 
+
+            string destinationFileName, 
+
+            CancellationToken cancellationToken = default) 
+
+{ 
+
+var fileId = Guid.NewGuid().ToString(); // or you can use any unique value  
+
+                                        // that will be used as Initial Vector 
+
+    var encryptedContext = await _cryptoManager.GetEncryptedStreamContext(uploadFileStream, encryptionContext, fileId, CryptoStreamMode.Read); 
+
+     
+
+    using (var cryptoStream = encryptedContext.Value) 
+
+    { 
+
+        var blobClient = _containerClient.GetBlobClient(destinationFileName); 
+
+        var bci = await blobClient.UploadAsync(cryptoStream, overwrite:false, cancellationToken); 
+
+        // fileId, keyVersion and encryptionContext should be stored too, because they needed for file decoding  
+
+        return new UploadResult { FileId = fileId, KeyVersion = encryptedContext.Version }; 
+
+    } 
+
+} 
+
+Write mode 
+
+Shape 
+
+ 
+
+// example for saving file to file system 
+
+public async Task<UploadAsyncResult> UploadAsync( 
+
+        Stream uploadFileStream, 
+
+        string destinationFileName, 
+
+        CancellationToken cancellationToken = default 
+
+    ) 
+
+{ 
+
+var fileId = Guid.NewGuid().ToString(); // or you can use any unique value  
+
+                                        // that will be used as Initialization Vector 
+
+    var targetStream = File.OpenWrite(destinationFileName); // this stream will be disposed right after ‘encryptedContext.Value’ will 
+
+    var encryptedContext = await _cryptoManager.GetEncryptedStreamContext(targetStream, encryptionContext, fileId, CryptoStreamMode.Write); 
+
+ 
+
+    using (var cryptoStream = encryptedContext.Value) 
+
+    { 
+
+        await uploadFileStream.CopyToAsync(cryptoStream, cancellationToken); 
+
+ 
+
+        return new UploadAsyncResult { KeyVersion = encryptedContext.Version }; 
+
+    } 
+
+} 
+
+Integration with Deloitte.Core.Logging package 
+
+ 
+
+To mask sensitive data from our components we create unique names for our logProperties. Here is a list of they: 
+
+DeloitteCore_Encryption_CalledMethod – name of called methods inside of Encryprion library or its providers. 
+
+DeloitteCore_Encryption_EncryptionContext – object, Encryption context which contains ContainerCode and ContainerId in initial implementation. 
+
+DeloitteCore_Encryption_KeyVersion – current key version for selected EncryptionContext. 
+
+DeloitteCore_Encryption_SecretName - name of retrieved secret while using KeyVaultKeyProvider. 
+
+DeloitteCore_Encryption_FileId – FileId, which is initial vector for encryption. 
+
+DeloitteCore_Encryption_LeaveOpen – option for stream using. 
+
+DeloitteCore_Encryption_StreamMode – selected option of using encryption stream. 
+
+DeloitteCore_Encryption_ConfigurationKey - name of retrieved configuration section while using AppSettingKeyProvider. 
