@@ -36,7 +36,7 @@ def read_text_file(file_path):
         time.sleep(delay)
         
         # Save the file to the 'Downloads' folder
-        new_path = temp_path.replace("Uploads", "Downloads")
+        new_path = file_path.replace("Uploads", "Downloads")
         with open(new_path, "w", encoding="utf-8") as file:
             file.write(content)
         print(f"File saved to: {new_path}")
@@ -53,11 +53,17 @@ def copy_file_to_dbfs(src_path, dest_path):
         print(f"Error copying file to DBFS: {e}")
         return False
 
-def read_pdf_file(pdf_dbfs_path):
-    """Read and extract text from a PDF file stored in DBFS."""
+def read_pdf_file(file_path):
+    """Read and extract text from a PDF file and save it after a delay."""
     try:
-        local_pdf_path = pdf_dbfs_path.replace("dbfs:/", "/dbfs/")
-        with open(local_pdf_path, "rb") as file:
+        dbfs_pdf_path = "dbfs:/tmp/temp_pdf.pdf"
+        
+        # Copy PDF file to DBFS before reading
+        if not copy_file_to_dbfs(file_path, dbfs_pdf_path):
+            return
+        
+        temp_path = dbfs_pdf_path.replace("dbfs:/", "/dbfs/")
+        with open(temp_path, "rb") as file:
             pdf = PdfReader(file)
             text = "\n".join([page.extract_text() for page in pdf.pages if page.extract_text()])
         print(text)
@@ -68,10 +74,14 @@ def read_pdf_file(pdf_dbfs_path):
         time.sleep(delay)
         
         # Save the file to the 'Downloads' folder
-        new_path = local_pdf_path.replace("Uploads", "Downloads")
+        new_path = file_path.replace("Uploads", "Downloads")
         with open(new_path, "wb") as file:
-            file.write(open(local_pdf_path, "rb").read())
+            file.write(open(temp_path, "rb").read())
         print(f"File saved to: {new_path}")
+        
+        # Delete temp file from /tmp
+        os.remove(temp_path)
+        print(f"Temporary file deleted: {temp_path}")
     except Exception as e:
         print(f"Error reading PDF file: {e}")
 
@@ -83,6 +93,4 @@ if __name__ == "__main__":
         if file_path.lower().endswith(".txt"):
             read_text_file(file_path)
         elif file_path.lower().endswith(".pdf"):
-            dbfs_pdf_path = "dbfs:/tmp/file.pdf"
-            if copy_file_to_dbfs(file_path, dbfs_pdf_path):
-                read_pdf_file(dbfs_pdf_path)
+            read_pdf_file(file_path)
