@@ -21,11 +21,12 @@ def check_file_exists(file_path):
         return False
 
 def read_text_file(file_path):
-    """Read content from a text file in ADLS using Spark."""
+    """Read content from a text file in ADLS using normal Python open function."""
     try:
-        spark = SparkSession.builder.getOrCreate()
-        content = spark.read.text(file_path)
-        content.show(truncate=False)
+        temp_path = file_path.replace("/mnt/", "/dbfs/mnt/")  # Adjust path for DBFS compatibility
+        with open(temp_path, "r", encoding="utf-8") as file:
+            content = file.read()
+        print(content)
     except Exception as e:
         print(f"Error reading text file: {e}")
 
