@@ -1,42 +1,63 @@
-file_path = r"/mnt/npdaimladlsuse2/dev2/US-000-1/APIPlatform/1cd00b2c-35cc-4739-8d24-842a01551f8b/0962ed1f-46e8-ef11-88f8-6045bd7d6213/Uploads/test.txt"
+import os
+from pyspark.sql import SparkSession
+from PyPDF2 import PdfReader
 
-# Function to check if the file exists
-def check_file_exists(path):
+def check_file_exists(file_path):
+    """Check if a file exists in an ADLS-mounted directory."""
     try:
-        files = dbutils.fs.ls(path.rsplit('/', 1)[0])  # List files in the directory
+        dir_path = file_path.rsplit('/', 1)[0]
+        file_name = file_path.split('/')[-1]
+        files = dbutils.fs.ls(dir_path)
+        
         for file in files:
-            if file.name == path.split("/")[-1]:  # Check for exact filename match
-                print(f" File exists: {path}")
-                                
-                with open(path, "r") as file:
-                    content = file.read()
-                print(f" {file.name}")
+            if file.name == file_name:
+                print(f"File exists: {file_path}")
                 return True
-        print(f" File NOT found: {path}")
+        
+        print(f"File NOT found: {file_path}")
         return False
     except Exception as e:
-        print(f"Error accessing path: {e}")
+        print(f"Error checking file existence: {e}")
         return False
 
-# Check file existence
-check_file_exists(file_path)
+def read_text_file(file_path):
+    """Read content from a text file in ADLS using Spark."""
+    try:
+        spark = SparkSession.builder.getOrCreate()
+        content = spark.read.text(file_path)
+        content.show(truncate=False)
+    except Exception as e:
+        print(f"Error reading text file: {e}")
 
+def copy_file_to_dbfs(src_path, dest_path):
+    """Copy file from ADLS-mounted storage to DBFS."""
+    try:
+        dbutils.fs.cp(src_path, dest_path)
+        print(f"File copied to {dest_path}")
+        return True
+    except Exception as e:
+        print(f"Error copying file to DBFS: {e}")
+        return False
 
-file_path = r"/mnt/npdaimladlsuse2/dev2/US-000-1/APIPlatform/1cd00b2c-35cc-4739-8d24-842a01551f8b/0962ed1f-46e8-ef11-88f8-6045bd7d6213/Uploads/test.txt"
+def read_pdf_file(pdf_dbfs_path):
+    """Read and extract text from a PDF file stored in DBFS."""
+    try:
+        local_pdf_path = pdf_dbfs_path.replace("dbfs:/", "/dbfs/")
+        with open(local_pdf_path, "rb") as file:
+            pdf = PdfReader(file)
+            text = "\n".join([page.extract_text() for page in pdf.pages if page.extract_text()])
+        print(text)
+    except Exception as e:
+        print(f"Error reading PDF file: {e}")
 
-content = spark.read.text(file_path)
-
-content.show(truncate=False)
-
-file_path = r"/mnt/npdaimladlsuse2/dev2/US-000-1/APIPlatform/1cd00b2c-35cc-4739-8d24-842a01551f8b/0962ed1f-46e8-ef11-88f8-6045bd7d6213/Uploads/independent auditor's report 3.pdf"
-# Copy from ADLS (Mounted) to DBFS Temporary Storage
-dbutils.fs.cp(file_path, "dbfs:/tmp/yourfile.pdf")
-from PyPDF2 import PdfReader
-# Now read from DBFS
-local_pdf_path = "/dbfs/tmp/yourfile.pdf"
-
-with open(local_pdf_path, "rb") as file:
-    pdf = PdfReader(file)
-    text = "\n".join([page.extract_text() for page in pdf.pages if page.extract_text()])
-
-print(text)
+if __name__ == "__main__":
+    # Define file path
+    file_path = "/mnt/npdaimladlsuse2/dev2/US-000-1/APIPlatform/.../Uploads/file"
+    
+    if check_file_exists(file_path):
+        if file_path.lower().endswith(".txt"):
+            read_text_file(file_path)
+        elif file_path.lower().endswith(".pdf"):
+            dbfs_pdf_path = "dbfs:/tmp/file.pdf"
+            if copy_file_to_dbfs(file_path, dbfs_pdf_path):
+                read_pdf_file(dbfs_pdf_path)
