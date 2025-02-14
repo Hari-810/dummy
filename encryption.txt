@@ -1,4 +1,6 @@
 import os
+import time
+import random
 from pyspark.sql import SparkSession
 from PyPDF2 import PdfReader
 
@@ -21,12 +23,23 @@ def check_file_exists(file_path):
         return False
 
 def read_text_file(file_path):
-    """Read content from a text file in ADLS using normal Python open function."""
+    """Read content from a text file in ADLS using normal Python open function and add delay before saving to a new location."""
     try:
         temp_path = file_path.replace("/mnt/", "/dbfs/mnt/")  # Adjust path for DBFS compatibility
         with open(temp_path, "r", encoding="utf-8") as file:
             content = file.read()
         print(content)
+        
+        # Introduce a random delay (0-300 sec)
+        delay = random.randint(0, 300)
+        print(f"Sleeping for {delay} seconds before saving the file...")
+        time.sleep(delay)
+        
+        # Save the file to the 'Downloads' folder
+        new_path = temp_path.replace("Uploads", "Downloads")
+        with open(new_path, "w", encoding="utf-8") as file:
+            file.write(content)
+        print(f"File saved to: {new_path}")
     except Exception as e:
         print(f"Error reading text file: {e}")
 
@@ -48,6 +61,17 @@ def read_pdf_file(pdf_dbfs_path):
             pdf = PdfReader(file)
             text = "\n".join([page.extract_text() for page in pdf.pages if page.extract_text()])
         print(text)
+        
+        # Introduce a random delay (0-300 sec)
+        delay = random.randint(0, 300)
+        print(f"Sleeping for {delay} seconds before saving the file...")
+        time.sleep(delay)
+        
+        # Save the file to the 'Downloads' folder
+        new_path = local_pdf_path.replace("Uploads", "Downloads")
+        with open(new_path, "wb") as file:
+            file.write(open(local_pdf_path, "rb").read())
+        print(f"File saved to: {new_path}")
     except Exception as e:
         print(f"Error reading PDF file: {e}")
 
