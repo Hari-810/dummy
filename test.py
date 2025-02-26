@@ -32,19 +32,21 @@ configs = {
 
 # Mount ADLS (if not already mounted)
 if not any(m.mountPoint == mount_point for m in dbutils.fs.mounts()):
-    dbutils.fs.mount(
-        source=f"abfss://{container_name}@{storage_account_name}.dfs.core.windows.net/",
-        mount_point=mount_point,
-        extra_configs=configs
-    )
-    print(f"ADLS successfully mounted at {mount_point}")
+    try:
+        dbutils.fs.mount(
+            source=f"abfss://{container_name}@{storage_account_name}.dfs.core.windows.net/",
+            mount_point=mount_point,
+            extra_configs=configs
+        )
+        print(f"ADLS successfully mounted at {mount_point}")
+    except Exception as e:
+        print(f"Error mounting ADLS: {e}")
+        raise Exception("ADLS mounting failed")
 else:
     print(f"ADLS is already mounted at {mount_point}")
 
 # Get configurations from widgets
 environment = os.environ["SYS_ENVIRONMENT"]
-dbutils.widgets.get("configurations")
-dbutils.widgets.get("configurations")
 parsed_data = json.loads(dbutils.widgets.get("configurations"))
 base_file_path = parsed_data["baseFilePath"]
 upload_folder = f"/mnt/{storage_account_name}/{environment}/{base_file_path}/Uploads/"
@@ -74,6 +76,7 @@ def process_all_files(upload_folder):
                 move_file(file_path, file_path.replace("Uploads", "Downloads"))
     except Exception as e:
         print(f"Error processing files: {e}")
+        raise Exception("File processing failed")
 
 process_all_files(upload_folder)
 
