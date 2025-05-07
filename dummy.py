@@ -1,92 +1,111 @@
-from graph_of_thoughts.prompter import Prompter
+import os
+import json
+import logging
+from typing import List, Dict, Union, Any
 
-class TestCaseQueryPrompter(Prompter):
-    """
-    Builds a structured prompt to generate Gherkin-style test case scenarios based on feature inputs and user journey.
-    """
-
-    def generate_prompt(self, inputs: dict) -> str:
-        return (
-            self._get_header()
-            + self._get_inputs_section(inputs)
-            + self._get_analysis_section()
-            + self._get_scenario_design_section()
-            + self._get_consolidation_section()
-            + self._get_output_format_section()
-            + self._get_notes_section()
-        )
-
-    def aggregation_prompt(self, inputs: dict) -> str:
-        return "Combine similar test case scenarios into one, using parameterized steps where necessary."
-
-    def improve_prompt(self, inputs: dict) -> str:
-        return "Review and enhance scenario coverage for edge cases, boundary conditions, and missed flows."
-
-    def score_prompt(self, inputs: dict) -> str:
-        return "Assign a score from 1-10 based on completeness, clarity, and Gherkin compliance of the test cases."
-
-    def validation_prompt(self, inputs: dict) -> str:
-        return "Ensure that all Acceptance Criteria and User Journey steps are covered by at least one scenario."
-
-    def _get_header(self) -> str:
-        return """## Test Case Scenario Generation Guidelines
-
-You are to produce a set of Gherkin-style test case scenarios that fully validate a feature. Your scenarios must:
-
-- Map directly (or indirectly) to steps in the **User Journey**.  
-- Cover **positive**, **negative**, **boundary**, **edge**, **alternate**, and **exploratory** flows.  
-- **Identify and merge** any similar or overlapping scenarios into one consolidated scenario.  
-- Be organized, hierarchical, and richly detailed.
-
-"""
-
-    def _get_inputs_section(self, inputs: dict) -> str:
-        return f"""### Inputs to Review
-- **Feature Title:** {inputs.get("feature_title", "")}  
-- **Feature Description:** {inputs.get("feature_description", "")}  
-- **Feature Acceptance Criteria:** {inputs.get("feature_acceptance_criteria", "")}  
-- **User Journey Information:** {inputs.get("retrieved_user_journey", "")}
-
-"""
-
-    def _get_analysis_section(self) -> str:
-        return """### Step 1: Analyze & Decompose
-1. Break down **Acceptance Criteria**, **Description**, and **User Journey** into discrete, testable behaviors.  
-2. Ensure no requirement or flow is omitted.  
-
-"""
-
-    def _get_scenario_design_section(self) -> str:
-        return """### Step 2: Scenario Design
-For each distinct behavior or merged group of similar behaviors:
-- **Title:** Give a concise, descriptive scenario title.  
-- **Gherkin Steps:**  
-  - **Given:** Precondition/context.  
-  - **When:** Action(s) taken.  
-  - **Then:** Expected outcome.  
-  - **And:** Additional validations or steps.  
-
-"""
-
-    def _get_consolidation_section(self) -> str:
-        return """### Step 3: Consolidation Rule
-- If scenarios differ only in minor details (e.g. copy AQM = true vs false), merge into one with multiple **When/Then/And** blocks or parameterized logic.
-
-"""
-
-    def _get_output_format_section(self) -> str:
-        return """### Step 4: Output Format
-- **Strict JSON** format without extra quotes or markdown.  
-
-```json
-{
-  "<Test Case Scenario Title>": [
-    {
-      "scenario": "Given ...\\nWhen ...\\nThen ...\\nAnd ..."
-    }
-  ]
-}
+from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+from langchain_openai import AzureChatOpenAI, AzureOpenAIEmbeddings
+from .abstract_language_model import AbstractLanguageModel  # adjust import as needed
 
 
-    def _get_notes_section(self) -> str:
-    return """**Notes:**"""
+class AzureADLanguageModel(AbstractLanguageModel):
+    def __init__(self, config_path: str = "", model_name: str = "", cache: bool = False):
+        super().__init__(config_path, model_name, cache)
+        self._load_env_or_config()
+        self.credential = DefaultAzureCredential()
+        self.token_provider = self._get_bearer_token_provider()
+        self.llm_model = self._init_llm()
+        self.embedding_model = self._init_embedding()
+
+    def _load_env_or_config(self):
+        """
+        Loads config values from environment variables or config file.
+        """
+        self.azure_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT", self.config.get("AZURE_OPENAI_ENDPOINT"))
+        self.api_version = os.getenv("API_VERSION", self.config.get("AZURE_OPENAI_API_VERSION"))
+        self.deployment_name = os.getenv("DEPLOYMENT_NAME", self.config.get("AZURE_OPENAI_DEPLOYMENT"))
+        self.embedding_model_name = os.getenv("EMBEDDING_MODEL", self.config.get("EMBEDDING_MODEL"))
+
+        if not all([self.azure_endpoint, self.api_version, self.deployment_name, self.embedding_model_name]):
+            raise ValueError("Missing Azure OpenAI configuration.")
+
+    def _get_bearer_token_provider(self):
+        """
+        Returns a callable that provides a bearer token.
+        """
+        try:
+            return get_bearer_token_provider(
+                self.credential,
+                "https://cognitiveservices.azure.com/.default"
+            )
+        except Exception as e:
+            logging.error(f"Error creating bearer token provider: {e}")
+            raise
+
+    def _init_llm(self):
+        """
+        Initializes the AzureChatOpenAI model using Azure AD token provider.
+        """
+        try:
+            return AzureChatOpenAI(
+                azure_endpoint=self.azure_endpoint,
+                openai_api_version=self.api_version,
+                deployment_name=self.deployment_name,
+                azure_ad_token_provider=self.token_provider,
+                openai_api_type="azure",
+                max_tokens=4096,
+                temperature=0.5,
+            )
+        except Exception as e:
+            logging.error(f"Failed to initialize AzureChatOpenAI: {e}")
+            return None
+
+    def _init_embedding(self):
+        """
+        Initializes the Azure OpenAI Embedding model using Azure AD.
+        """
+        try:
+            return AzureOpenAIEmbeddings(
+                model=self.embedding_model_name,
+                azure_endpoint=self.azure_endpoint,
+                openai_api_version=self.api_version,
+                azure_ad_token_provider=self.token_provider,
+            )
+        except Exception as e:
+            logging.error(f"Failed to initialize AzureOpenAIEmbeddings: {e}")
+            return None
+
+    def query(self, query: str, num_responses: int = 1) -> Any:
+        """
+        Query the AzureChatOpenAI model.
+        """
+        try:
+            if not self.llm_model:
+                raise RuntimeError("LLM model not initialized.")
+            messages = [{"role": "user", "content": query}]
+            response = self.llm_model.invoke(messages)
+            if self.cache:
+                self.respone_cache[query] = response
+            return response
+        except Exception as e:
+            logging.error(f"Error during LLM query: {e}")
+            return None
+
+    def get_response_texts(self, query_responses: Union[List[Dict], Dict]) -> List[str]:
+        """
+        Extract text content from the model response.
+        """
+        try:
+            # Single response object (LangChain `AIMessage`)
+            if isinstance(query_responses, dict) and "content" in query_responses:
+                return [query_responses["content"]]
+            elif hasattr(query_responses, "content"):
+                return [query_responses.content]
+            # List of response dicts
+            elif isinstance(query_responses, list):
+                return [resp.get("message", {}).get("content", "") for resp in query_responses]
+            else:
+                raise TypeError("Invalid response format.")
+        except Exception as e:
+            logging.error(f"Failed to extract response texts: {e}")
+            return []
