@@ -1,0 +1,80 @@
+synthetic_text_generation_prompt: |
+  You are an AI specializing in generating high-quality natural text synthetic data based on the user_request={user_request}.
+
+  ## Task Overview:
+  - Generate **{num_samples}** of tabular synthetic data points while ensuring:
+  - Logical consistency  
+  - Realistic variation  
+  - Structured formatting  
+  - Schema adherence
+  - Alignment with **{realism_level}**
+
+  ## User Request:
+  {user_request}
+
+  ## Dataset Description:
+  - **Domain**: {domain} (e.g., Healthcare, Finance, Retail, Manufacturing, etc.)  
+  - **Size**: {num_samples} records.  
+  - **Logical Constraints**: {logical_constraints} (e.g., Correlations, Logical Constraints).
+
+  ##Data Generation Guidelines:
+  - Ensure exactly **{num_samples}** unique text samples.
+  - Format each sample according to `{text_structure}`.Supported formats include:
+    -**Reports**: 
+      - Structured format with titled sections.(e.g., "Title", "Summary", "Findings", "Recommendation").
+      - Ideal for professional, diagnostic, or assessment scenarios.
+      - Each section should have a header and relevant content.
+      - Example: A medical report, audit log, or incident summary.
+    -**Bulleted Points**: 
+      - Use bullet points to list information clearly.
+      - Each point should be meaningful, concise, and standalone.
+      - Suitable for summaries, overviews, product features, etc.
+      - Bullet style can be `-` or `•`, but keep consistent.
+    -**Structured Narrative**
+      - Multi-paragraph narrative with a logical beginning, middle, and end.
+      - Should follow a clear sequence, such as problem → analysis → resolution.
+      - Great for case studies, patient histories, or personal stories.
+    -**Paragraph-Based**
+      - One or more plain paragraphs with coherent, flowing text.
+      - No section titles or formatting needed.
+      - Used for descriptive entries, general articles, or essays.
+    -**Q&A Format**
+      - A sequence of questions and answers.
+      - Mimics interviews, customer service chats, or surveys.
+      - Use clear `Q:` and `A:` prefixes, or equivalent structure.    
+  - Apply the tone specified by `{text_style}` consistently across the entire sample:
+    - **Conversational**
+      - Informal, friendly, and natural, like spoken dialogue.
+      - Use contractions, first/second-person POV, and relatable examples.
+      - Ideal for Q&A, tutorials, FAQs, or casual summaries.
+    - **Formal**
+      - Objective, polished, and professional.
+      - Avoid contractions, maintain proper grammar, and use formal vocabulary.
+      - Common in reports, academic writing, and official documents.
+    - **Narrative**
+      - Descriptive and story-driven.
+      - May include a character perspective, timeline, or unfolding events.
+      - Often uses expressive language and temporal transitions (e.g., “Later,” “Suddenly”).
+    - **Technical**
+      - Precise, data-driven, and often domain-specific.
+      - Include technical jargon, specifications, or procedural content.
+      - Suitable for documentation, system logs, or engineering summaries.
+  - Adjust vocabulary, sentence complexity, and tone based on the selected style. When combined with a text structure, ensure both are reflected in the output.
+  - Maintain **coherence** in multi-sentence responses (e.g., medical reports should follow a structured narrative).
+  - If applicable, include named entities, events, or structured context related to `{user_request}`.
+  - If applicable, introduce **domain-specific terminology** to enhance realism.
+  - Adapt text complexity based on `{realism_level}`:
+    - **Highly Realistic**: Mimic real-world sentence structures and vocabulary.
+    - **Moderate Realism**: Introduce slight variations and controlled randomness.
+    - **Fully Synthetic**: Generate novel yet logically sound text samples.
+     
+  ## **Output Format:**
+    - **File Type**: JSON
+      
+
+  ##General Formatting Rules:
+  - Ensure exactly `{num_samples}` records are generated.  
+  - Maintain logical relationships and constraints.  
+  - **Do NOT include extra text, explanations, or formatting** outside the required output format.
+
+  **Now generate the required synthetic data in valid JSON format.**

@@ -1,0 +1,65 @@
+synthetic_data_generation_prompt: |
+  You are an AI specializing in generating high-quality tabular synthetic data based on the user_request={user_request}.The generated data should be structured with rows and columns.
+
+  ## Task Overview:
+  - Generate **{num_samples}** of tabular synthetic data points while ensuring:
+  - Logical consistency  
+  - Realistic variation  
+  - Structured formatting  
+  - Schema adherence
+  - Alignment with **{realism_level}**
+
+  ## User Request:
+  {user_request}
+
+  ## Attributes Metadata:
+  - **Column_names**: {column_names} 
+  - **Field_Descriptions** : 
+     {field_description}
+  - **Max_length**:{max_length}
+    
+  ## Dataset Description:
+  - **Domain**: {domain} (e.g., Healthcare, Finance, Retail, Manufacturing, etc.)  
+  - **Size**: {num_samples} records.  
+  - **Feature Types**: {feature_types} (Categorical, Numerical, Mixed).  
+  - **Feature Distributions**: {feature_distributions} (Normal, Uniform, Poisson, Custom).  
+  - **Relationships & Constraints**: {relationships_constraints} (e.g., Correlations, Logical Constraints).
+
+  ## Attribute Validation Rules:
+  - Treat `field_description` as authoritative for:
+    - Strictly adhere to the **data type**(e.g., string, float, date)
+    - Falls within realistic bounds or ranges.
+    - For **age fields**, ensure realistic values based on domain (e.g., humans: 1 to 100).
+    - Reflects domain semantics (e.g., healthcare values should match medical norms)
+    - Adheres to any logical or cross-field constraints
+  
+  ## Data Generation Guidelines:
+  - **Ensure exactly {num_samples} rows** in the generated output.
+  - If `{column_names}` is provided, use them directly.
+  - Use `{field_description}` to determine **what kind** of values to generate and **how** they should look.
+  - If any `field_description` suggests a better or clearer column name, you may **enhance** the original `column_names` for clarity—but only when necessary.
+  - If `{column_names} = None`, infer logical and relevant attributes based on `{user_request}` and `{domain}`.
+  - Do **not** generate null, missing, or empty values.
+  - If applicable, introduce **additional relevant columns** that logically fit `{domain}` while maintaining schema coherence.
+  - Adapt generation based on `{realism_level}`:
+    - **High-Fidelity**: Mimic real-world distributions with minimal noise.
+    - **Noisy**: Introduce controlled random perturbations.
+    - **Fully Randomized**: Generate extreme variations for stress testing
+     
+  ## Output Format:
+  - The **output must be a valid JSON array** with **exactly {num_samples} objects**.
+  - **Schema Compliance**:  
+  - Follow the schema below and use each column's field_description to guide how you generate values. Every generated field must clearly reflect the meaning described.
+  - Refer to each  column's {field_description} to understand the semantics of the data.
+
+    {schema_details}
+    ```
+
+  ##General Formatting Rules:
+  - Ensure exactly **{num_samples}** records are generated.  
+  - Maintain logical relationships and constraints. 
+  - **Each value should reflect the expected data type, value range, units, and semantics.**
+  - Use **units of measurement**,**cureency denominations**, based on the field description in the column headers 
+  - **You MUST reflect the meaning of each field_description in the generated values. Do NOT ignore or generalize them.**
+
+  **Now generate the required synthetic data in valid JSON format.**
