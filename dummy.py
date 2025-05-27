@@ -225,10 +225,26 @@ def fetch_and_save_wiki_with_links_and_images(connection, wiki_url, project_name
             except Exception as e:
                 print(f"[!] Error downloading markdown image {rel_path}: {e}")
 
-        # Return internal wiki links
-        links = [a['href'] for a in soup.find_all('a', href=True)]
-        print("Links:", links)
-        return links
+        # Extract links using BeautifulSoup (HTML links)
+        html_links = [a['href'] for a in soup.find_all('a', href=True)]
+
+        # Extract links using regex for markdown format: [text](link)
+        markdown_links = re.findall(r'\[[^\]]*\]\((.*?)\)', content)
+        print("markdown_links :", markdown_links)
+        # Combine and filter only internal wiki links
+        all_links = html_links + markdown_links
+
+        # Capture links pointing to other wiki pages
+        wiki_links = [
+            link for link in all_links
+            if ('/wiki/' in link or '_wiki' in link)  # wiki structure match
+        ]
+
+        # Remove duplicates
+        internal_links = list(set(wiki_links))
+
+        print("Links:", internal_links)
+        return internal_links
 
     visited_pages = set()
     to_visit = [(wiki_identifier, page_id)]
