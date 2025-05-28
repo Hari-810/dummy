@@ -1,8 +1,3 @@
-import os
-import re
-import requests
-from urllib.parse import urlparse, quote, unquote, urlsplit, parse_qs
-from bs4 import BeautifulSoup
 
 class AzureWikiCrawler:
     def __init__(self, connection, wiki_url, project_name, pat_token, output_dir="wiki_pages", max_depth=5):
@@ -28,6 +23,7 @@ class AzureWikiCrawler:
     def save_image(self, img_url):
         if img_url.startswith('/'):
             img_url = self.base_url + img_url
+
         response = requests.get(img_url, headers=self.headers)
         if response.status_code == 200:
             filename = os.path.basename(urlparse(img_url).path)
@@ -43,7 +39,7 @@ class AzureWikiCrawler:
         url = (
             f"{self.base_url}/{self.project_name}/_apis/wiki/wikis/{wiki_identifier}/pages"
             f"?path={encoded_path}&includeContent=true&api-version=7.0"
-        )
+        )   
         response = requests.get(url, headers=self.headers)
         if response.status_code == 200:
             return response.json()
@@ -70,9 +66,10 @@ class AzureWikiCrawler:
         print(f"[✓] Wiki page saved: {md_file}")
 
         soup = BeautifulSoup(content, "html.parser")
+        # HTML-style images
         for img in soup.find_all('img', src=True):
             self.save_image(img['src'])
-
+        # Markdown-style images
         try:
             wiki_data = self.wiki_client.get_wiki(project=self.project_name, wiki_identifier=wiki_identifier)
             repository_id = wiki_data.repository_id
@@ -80,7 +77,8 @@ class AzureWikiCrawler:
             for rel_path in md_attachments:
                 encoded_path = quote(rel_path)
                 attachment_url = (
-                    f"{self.base_url}/{quote(self.project_name)}/_apis/git/repositories/{repository_id}/Items"
+                    f"https://dev.azure.com/symphonyvsts/"
+                    f"{quote(self.project_name)}/_apis/git/repositories/{repository_id}/Items"
                     f"?path={encoded_path}&download=false&resolveLfs=true&$format=octetStream"
                 )
                 resp = requests.get(attachment_url, auth=requests.auth.HTTPBasicAuth('', self.pat_token))
@@ -95,33 +93,43 @@ class AzureWikiCrawler:
         except Exception as e:
             print(f"[!] Markdown image handling failed: {e}")
 
-        # Extract all kinds of links
+         # HTML links
         html_links = [a['href'] for a in soup.find_all('a', href=True)]
+        # Markdown links
         markdown_links = re.findall(r'\[[^\]]*\]\((.*?)\)', content)
+         # Wiki-style links
         wiki_syntax_links = re.findall(r'\[\[([^\]|]+)(?:\|[^\]]+)?\]\]', content)
-        direct_wiki_links = re.findall(r'/wiki/wikis/[^/]+/\d+/', content)
-
         wiki_style_internal_links = [
             f"/{self.project_name}/_wiki/wikis/{wiki_identifier}/pages?path=/{quote(title.strip())}"
             for title in wiki_syntax_links
         ]
 
-        all_links = list(set(html_links + markdown_links + wiki_style_internal_links + direct_wiki_links))
+        all_links = list(set(html_links + markdown_links + wiki_style_internal_links))
         self.all_urls.update(all_links)
 
         internal_links = []
-        for link in all_links:
-            if "sharepoint.com" in link or "onedrive" in link:
-                continue  # skip non-AzureDevOps links
-            if "pages?path=" in link or re.search(r'/wiki/wikis/[^/]+/\d+/', link):
-                internal_links.append(link)
+        print("all_links: ",all_links)
 
+        for link in all_links:
+            if link.startswith('/'):
+                if "pages?path=" in link:
+                    internal_links.append(link)
+                else:
+                    normalized_link = f"/{self.project_name}/_wiki/wikis/{wiki_identifier}/pages?path={quote(link)}"
+                    internal_links.append(normalized_link)
         return internal_links
 
     def crawl(self):
         path_parts = self.parsed_url.path.strip('/').split('/')
         initial_wiki_identifier = path_parts[4]
         initial_page_id = path_parts[5]
+
+        def save_markdown(url, content):
+            filename = url.split("/")[-1].split("?")[0] or "index"
+            filepath = os.path.join(self.output_dir, f"{filename}.md")
+            with open(filepath, "w", encoding="utf-8") as f:
+                f.write(content)
+            print(f"[✓] Saved content to {filepath}")
 
         def crawl_recursive(wiki_identifier, page_id, depth):
             if depth > self.max_depth:
@@ -132,31 +140,75 @@ class AzureWikiCrawler:
             self.visited_pages.add(key)
 
             links = self.process_page(wiki_identifier, page_id)
+            print("links: ",links)
             for link in links:
                 try:
-                    if "pages?path=" in link:
-                        qs = parse_qs(urlsplit(link).query)
+                    if "/Audit-AIML-Project-Wiki/API-Platform/" in link:
+                        print(f"[+] Matched API-Platform URL: {link}")
+                        splitted = urlsplit(link)
+                        qs = parse_qs(splitted.query)
                         page_path = qs.get("path", [None])[0]
+
                         if not page_path or page_path in ["/_TOC_", "/_Header", "/_Footer"]:
+                            print(f"[!] Skipping system path or empty: {page_path}")
                             continue
-                        page_data = self.get_page_by_path_rest(wiki_identifier, page_path)
+
+                        page_path_clean = unquote(page_path)
+                        page_path_encoded = quote(page_path_clean, safe="/")
+
+                        prefix = "https://dev.azure.com/symphonyvsts/Audit%20AIML/_wiki/wikis/Audit-AIML.wiki?wikiVersion=GBwikiMaster&pagePath="
+                        modified_url = prefix + page_path_encoded
+                        print(f"[+] Modified URL: {modified_url}")
+
+                        page_data = self.get_page_by_path_rest(wiki_identifier, page_path_clean)
                         if page_data:
                             new_page_id = page_data.get("id")
                             if new_page_id:
                                 crawl_recursive(wiki_identifier, new_page_id, depth + 1)
-                    else:
-                        match = re.search(r'/wiki/wikis/([^/]+)/(\d+)', link)
-                        if match:
-                            linked_wiki_identifier = match.group(1)
-                            linked_page_id = match.group(2)
-                            crawl_recursive(linked_wiki_identifier, linked_page_id, depth + 1)
+                        else:
+                            print(f"[!] REST API failed for path {page_path} - trying direct fetch")
+                            response = requests.get(modified_url, headers=self.headers)
+                            if response.status_code in (200, 203):
+                                
+                                print(f"[✓] Fallback fetch success: {modified_url}")
+                                save_markdown(modified_url, response.text)
+                            else:
+                                print(f"[!] Fallback fetch failed. Status: {response.status_code}")
+                        continue
+
+                    elif "/_wiki/wikis/" in link:
+                        if "pages?path=" in link:
+                            splitted = urlsplit(link)
+                            qs = parse_qs(splitted.query)
+                            page_path = qs.get("path", [None])[0]
+                            if not page_path or page_path in ["/_TOC_", "/_Header", "/_Footer"]:
+                                continue
+                            page_data = self.get_page_by_path_rest(wiki_identifier, page_path)
+                            if page_data:
+                                new_page_id = page_data.get("id")
+                                if new_page_id:
+                                    crawl_recursive(wiki_identifier, new_page_id, depth + 1)
+                        else:
+                            segments = urlsplit(link).path.strip('/').split('/')
+                            try:
+                                wiki_index = segments.index('_wiki')
+                                wiki_identifier = segments[wiki_index + 2]
+                                # Check if next segment after wiki_identifier is a digit (page ID)
+                                page_index = wiki_index + 3
+                                if len(segments) > page_index and segments[page_index].isdigit():
+                                    page_id = segments[page_index]
+                                    crawl_recursive(wiki_identifier, page_id, depth + 1)
+                            except (ValueError, IndexError):
+                                continue
                 except Exception as e:
                     print(f"[!] Error processing link {link}: {e}")
                     continue
 
         crawl_recursive(initial_wiki_identifier, initial_page_id, 1)
 
-        with open(os.path.join(self.output_dir, "crawled_urls.txt"), "w", encoding="utf-8") as f:
+        url_file = os.path.join(self.output_dir, "crawled_urls.txt")
+        with open(url_file, "w", encoding="utf-8") as f:
             for url in sorted(self.all_urls):
                 f.write(url + "\n")
-        print(f"[✓] All URLs saved to: {self.output_dir}/crawled_urls.txt")
+        print(f"[✓] All URLs saved to: {url_file}")
+        
