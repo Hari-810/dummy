@@ -78,6 +78,7 @@ def fetch_and_save_wiki_with_links_and_images(connection, wiki_url, project_name
 
         # -- Extract HTML links --
         html_links = [a['href'] for a in soup.find_all('a', href=True)]
+        print("html_links: ",html_links)
         # -- Extract Markdown links --
         markdown_links = re.findall(r'\[[^\]]*\]\((.*?)\)', content)
         # -- Extract Wiki-style links: [[PageName]] or [[PageName|Label]] --
@@ -114,6 +115,7 @@ def fetch_and_save_wiki_with_links_and_images(connection, wiki_url, project_name
         links = process_page(curr_wiki_id, curr_page_id)
 
         for link in links:
+          
             try:
                 # Extract the 'path' parameter from the link.
                 splitted = urlsplit(link)
@@ -139,3 +141,10 @@ def fetch_and_save_wiki_with_links_and_images(connection, wiki_url, project_name
             except Exception as e:
                 print(f"[!] Error processing link {link}: {e}")
                 continue
+
+
+
+
+html_links:  ['https://dev.azure.com/symphonyvsts/Audit%20DevOps/_wiki/wikis/Global_Hosting.wiki/24876/Outgoing-IP-Addresses-for-AWS-Developer-Workstations', 'https://knowledge.broadcom.com/external/article/167174/web-security-service-wss-ingress-and-egr.html', 'https://networksdb.io/ip-addresses-of/netskope-inc/country/United+States', 'https://www.ip2location.com/as55256', 'https://dev.azure.com/symphonyvsts/Audit%20DevOps/_wiki/wikis/Global_Hosting.wiki/24876/Outgoing-IP-Addresses-for-AWS-Developer-Workstations', 'https://knowledge.broadcom.com/external/article/167174/web-security-service-wss-ingress-and-egr.html', 'https://networksdb.io/ip-addresses-of/netskope-inc/country/United+States', 'https://www.ip2location.com/as55256', 'https://dev.azure.cons', 'https://knowledge.broadcom.com/external/article/167174/web-security-service-wss-ingress-and-egr.html', 'https://networksdb.io/ip-addresses-of/netskope-inc/country/United+States', 'https://www.ip2location.com/as55256', 'https://dev.azure.com/symphonyvsts/Audit%20DevOps/_wiki/wikis/Global_Hosting.wiki/24876/Outgoing-IP-Addresses-for-AWS-Developer-Workstations', 'https://knowledge.broadcom.com/external/article/167174/web-security-service-wss-ingress-and-egr.html', 'https://networksdb.io/ip-addresses-of/netskope-inc/country/United+States', 'https://www.ip2location.com/as55256', 'https://dev.azure.ciki/24876/Outgoing-IP-Addresses-for-AWS-Developer-Workstations', 'https://knowledge.broadcom.com/external/article/167174/web-security-service-wss-ingress-and-egr.html', 'https://networksdb.io/ip-addresses-of/netskope-inc/country/United+States', 'https://www.ip2location.com/as55256', 'https://dev.azure.com/symphonyvsts/Audit%20DevOps/_wiki/wikis/Global_Hosting.wiki/24876/Outgoing-IP-Addresses-for-AWS-Developer-Workstations', 'https://knowledge.broadcom.com/external/article/167174/web-security-service-wss-ingress-and-egr.html', 'https://networksdb.io/ip-addresses-of/netskope-inc/country/United+States', com/external/article/167174/web-security-service-wss-ingress-and-egr.html', 'https://networksdb.io/ip-addresses-of/netskope-inc/country/United+States', 'https://www.ip2location.com/as55256']
+
+[!] Error resolving page path /_TOC_: 'WikiClient' object has no attribute 'get_page_by_path'
