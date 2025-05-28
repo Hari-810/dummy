@@ -17,13 +17,13 @@ class AzureWikiCrawler:
         os.makedirs(os.path.join(self.output_dir, "images"), exist_ok=True)
 
         self.wiki_client = self.connection.clients.get_wiki_client()
+        self.headers = {"Authorization": f"Basic {requests.auth._basic_auth_str('', self.pat_token)}"}
 
     def save_image(self, img_url):
         if img_url.startswith('/'):
             img_url = self.base_url + img_url
 
-        headers = {"Authorization": f"Basic {requests.auth._basic_auth_str('', self.pat_token)}"}
-        response = requests.get(img_url, headers=headers)
+        response = requests.get(img_url, headers=self.headers)
         if response.status_code == 200:
             filename = os.path.basename(urlparse(img_url).path)
             image_path = os.path.join(self.output_dir, "images", filename)
@@ -39,8 +39,7 @@ class AzureWikiCrawler:
             f"{self.base_url}/{self.project_name}/_apis/wiki/wikis/{wiki_identifier}/pages"
             f"?path={encoded_path}&includeContent=true&api-version=7.0"
         )
-        headers = {"Authorization": f"Basic {requests.auth._basic_auth_str('', self.pat_token)}"}
-        response = requests.get(url, headers=headers)
+        response = requests.get(url, headers=self.headers)
         if response.status_code == 200:
             return response.json()
         else:
@@ -66,7 +65,6 @@ class AzureWikiCrawler:
         print(f"[✓] Wiki page saved: {md_file}")
 
         soup = BeautifulSoup(content, "html.parser")
-
         for img in soup.find_all('img', src=True):
             self.save_image(img['src'])
 
@@ -133,7 +131,6 @@ class AzureWikiCrawler:
                 try:
                     if "/Audit-AIML-Project-Wiki/API-Platform/" in link:
                         print(f"[+] Matched API-Platform URL: {link}")
-                        
                         splitted = urlsplit(link)
                         qs = parse_qs(splitted.query)
                         page_path = qs.get("path", [None])[0]
@@ -142,31 +139,27 @@ class AzureWikiCrawler:
                             print(f"[!] Skipping system path or empty: {page_path}")
                             continue
 
-                        # Properly encode the page path
-                        page_path_encoded = quote(page_path, safe="")
+                        page_path_clean = unquote(page_path)
+                        page_path_encoded = quote(page_path_clean, safe="/")
 
                         prefix = "https://dev.azure.com/symphonyvsts/Audit%20AIML/_wiki/wikis/Audit-AIML.wiki?wikiVersion=GBwikiMaster&pagePath="
                         modified_url = prefix + page_path_encoded
-
                         print(f"[+] Modified URL: {modified_url}")
 
-                        # Try REST API as usual
-                        page_data = self.get_page_by_path_rest(wiki_identifier, page_path)
+                        page_data = self.get_page_by_path_rest(wiki_identifier, page_path_clean)
                         if page_data:
                             new_page_id = page_data.get("id")
                             if new_page_id:
                                 crawl_recursive(wiki_identifier, new_page_id, depth + 1)
                         else:
                             print(f"[!] REST API failed for path {page_path} - trying direct fetch")
-                            # Optional fallback
-                            response = requests.get(modified_url, headers=headers)
+                            response = requests.get(modified_url, headers=self.headers)
                             if response.status_code == 200:
                                 print(f"[✓] Fallback fetch success: {modified_url}")
                                 save_html_or_markdown(modified_url, response.text)
                             else:
                                 print(f"[!] Fallback fetch failed. Status: {response.status_code}")
-
-                        continue  # Move to next link
+                        continue
 
                     elif "/_wiki/wikis/" in link:
                         if "pages?path=" in link:
@@ -198,10 +191,8 @@ class AzureWikiCrawler:
 
         crawl_recursive(initial_wiki_identifier, initial_page_id, 1)
 
-        # Save all collected URLs to a file
         url_file = os.path.join(self.output_dir, "crawled_urls.txt")
         with open(url_file, "w", encoding="utf-8") as f:
             for url in sorted(self.all_urls):
                 f.write(url + "\n")
         print(f"[✓] All URLs saved to: {url_file}")
-
