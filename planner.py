@@ -1,4 +1,3 @@
-
 class SimpleAzureWikiCrawler:
     SYSTEM_PATHS = {"/_TOC_", "/_Header", "/_Footer"}
 
@@ -113,4 +112,3 @@ class SimpleAzureWikiCrawler:
                 self.crawl(wiki_id, info["path"], depth + 1, is_path=True)
             elif info["type"] == "id":
                 self.crawl(wiki_id, info["page_id"], depth + 1, is_path=False)
-
