@@ -1,3 +1,4 @@
+
 def fetch_and_save_wiki_with_links_and_images(connection, wiki_url, project_name=PROJECT_NAME, pat_token=PERSONAL_ACCESS_TOKEN, output_dir="wiki_pages"):
     import os, re
     from urllib.parse import urlparse, quote, urlsplit, parse_qs
@@ -103,6 +104,7 @@ def fetch_and_save_wiki_with_links_and_images(connection, wiki_url, project_name
         ]
 
         all_links = list(set(html_links + markdown_links + wiki_style_internal_links))
+        print("all_links: ",all_links)
         internal_links = []
         for link in all_links:
             if link.startswith('/'):
@@ -124,26 +126,47 @@ def fetch_and_save_wiki_with_links_and_images(connection, wiki_url, project_name
         visited_pages.add(key)
 
         links = process_page(curr_wiki_id, curr_page_id)
-
+        print("links: ",links)
         for link in links:
             try:
-                splitted = urlsplit(link)
-                qs = parse_qs(splitted.query)
-                page_path = qs.get("path", [None])[0]
-                if not page_path:
-                    print(f"[!] No 'path' found in link: {link}")
-                    continue
-                if page_path in ["/_TOC_", "/_Header", "/_Footer"]:
-                    print(f"[!] Skipping special system path: {page_path}")
-                    continue
+                # Handle relative and full wiki links
+                if "/_wiki/wikis/" in link:
+                    if "pages?path=" in link:
+                        # Extract from query param
+                        splitted = urlsplit(link)
+                        qs = parse_qs(splitted.query)
+                        page_path = qs.get("path", [None])[0]
+                        if not page_path or page_path in ["/_TOC_", "/_Header", "/_Footer"]:
+                            print(f"[!] Skipping special system path or empty path: {page_path}")
+                            continue
+                        page_data = get_page_by_path_rest(curr_wiki_id, page_path)
+                        if page_data:
+                            new_page_id = page_data.get("id")
+                            if new_page_id:
+                                next_key = f"{curr_wiki_id}_{new_page_id}"
+                                if next_key not in visited_pages:
+                                    to_visit.append((curr_wiki_id, new_page_id))
 
-                page_data = get_page_by_path_rest(curr_wiki_id, page_path)
-                if page_data:
-                    new_page_id = page_data.get("id")
-                    if new_page_id:
-                        next_key = f"{curr_wiki_id}_{new_page_id}"
-                        if next_key not in visited_pages:
-                            to_visit.append((curr_wiki_id, new_page_id))
+                    else:
+                        # Handle format: /_wiki/wikis/{wikiId}/pages/{pageId}/Title
+                        segments = urlsplit(link).path.strip('/').split('/')
+                        try:
+                            wiki_index = segments.index('_wiki')
+                            wiki_identifier = segments[wiki_index + 2]
+                            if 'pages' in segments:
+                                page_index = segments.index('pages')
+                                page_id = segments[page_index + 1]
+                                if page_id.isdigit():
+                                    key = f"{wiki_identifier}_{page_id}"
+                                    if key not in visited_pages:
+                                        to_visit.append((wiki_identifier, page_id))
+                        except (ValueError, IndexError) as e:
+                            print(f"[!] Error parsing structured wiki URL: {link} -> {e}")
+                            continue
+                else:
+                    print(f"[i] Skipping non-wiki link: {link}")
             except Exception as e:
                 print(f"[!] Error processing link {link}: {e}")
                 continue
+
+
