@@ -1,176 +1,124 @@
-import os
-import re
-from urllib.parse import urlparse, quote, urlsplit, parse_qs
-from bs4 import BeautifulSoup
-import requests
+import pandas as pd
+import numpy as np
+import nltk
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
+from nltk.translate.bleu_score import sentence_bleu, SmoothingFunction
+from sentence_transformers import SentenceTransformer
+from nltk.tokenize import sent_tokenize
 
+nltk.download('punkt')
 
-class AzureWikiCrawler:
-    def __init__(self, connection, wiki_url, project_name, pat_token, output_dir="wiki_pages", max_depth=5):
-        self.connection = connection
-        self.wiki_url = wiki_url
-        self.project_name = project_name
-        self.pat_token = pat_token
-        self.output_dir = output_dir
-        self.max_depth = max_depth
+# Load CSV file
+df = pd.read_csv("AQM_Feature_4122287_testcase.csv")
 
-        self.visited_pages = set()
-        self.all_urls = set()
+# Define key columns based on flat CSV headers
+col_id = 'User Story ID'
+userstory_fields = [
+    'User Story Title',
+    'User Story Description',
+    'Acceptance Criteria',
+    'Test Scenario'  # This holds ADO test steps
+]
+testcase_fields = [
+    'Generated Testcase_Test Case Title',
+    'Generated Testcase_Action',
+    'Generated Testcase_Excepted Output'
+]
 
-        self.parsed_url = urlparse(wiki_url)
-        self.base_url = f"{self.parsed_url.scheme}://{self.parsed_url.netloc}"
+def clean_text(text):
+    if pd.isna(text):
+        return ""
+    return str(text).replace('\n', ' ').replace('\r', ' ').strip().lower()
 
-        os.makedirs(self.output_dir, exist_ok=True)
-        os.makedirs(os.path.join(self.output_dir, "images"), exist_ok=True)
+# Grouping logic
+grouped = df.groupby(col_id)
+model = SentenceTransformer('all-MiniLM-L6-v2')
+smoothie = SmoothingFunction().method4
+results = []
 
-        self.wiki_client = self.connection.clients.get_wiki_client()
+for user_story_id, group in grouped:
+    # Combine user story metadata (excluding 'Test Scenario')
+    userstory_text = " ".join([clean_text(group[field].iloc[0]) for field in userstory_fields if field != 'Test Scenario'])
 
-    def save_image(self, img_url):
-        if img_url.startswith('/'):
-            img_url = self.base_url + img_url
+    # Collect ADO Test Actions and split into steps
+    ado_actions_raw = clean_text(group['Test Scenario'].iloc[0])
+    ado_steps = [step.strip() for step in sent_tokenize(ado_actions_raw) if step.strip()]
 
-        headers = {"Authorization": f"Basic {requests.auth._basic_auth_str('', self.pat_token)}"}
-        response = requests.get(img_url, headers=headers)
-        if response.status_code == 200:
-            filename = os.path.basename(urlparse(img_url).path)
-            image_path = os.path.join(self.output_dir, "images", filename)
-            with open(image_path, "wb") as f:
-                f.write(response.content)
-            print(f"[✓] Image saved: {image_path}")
-        else:
-            print(f"[!] Failed to download image: {img_url} (status {response.status_code})")
+    # Combine all generated testcase actions into one string
+    generated_actions = " ".join([clean_text(tc) for tc in group['Generated Testcase_Action']])
 
-    def get_page_by_path_rest(self, wiki_identifier, page_path):
-        encoded_path = quote(page_path, safe='')
-        url = (
-            f"{self.base_url}/{self.project_name}/_apis/wiki/wikis/{wiki_identifier}/pages"
-            f"?path={encoded_path}&includeContent=true&api-version=7.0"
+    # Evaluate similarity metrics for each ADO step
+    step_results = []
+    for step in ado_steps:
+        # TF-IDF Cosine Similarity
+        tfidf = TfidfVectorizer().fit([step, generated_actions])
+        vecs = tfidf.transform([step, generated_actions])
+        cosine = cosine_similarity(vecs[0], vecs[1])[0][0]
+
+        # BLEU Score
+        bleu = sentence_bleu(
+            [nltk.word_tokenize(generated_actions)],
+            nltk.word_tokenize(step),
+            smoothing_function=smoothie
         )
-        headers = {"Authorization": f"Basic {requests.auth._basic_auth_str('', self.pat_token)}"}
-        response = requests.get(url, headers=headers)
-        if response.status_code == 200:
-            return response.json()
-        else:
-            print(f"[!] REST API failed for path {page_path} - status {response.status_code}")
-            return None
 
-    def process_page(self, wiki_identifier, page_id):
-        try:
-            page = self.wiki_client.get_page_by_id(
-                project=self.project_name,
-                wiki_identifier=wiki_identifier,
-                id=page_id,
-                include_content=True
-            )
-        except Exception as e:
-            print(f"[!] Failed to fetch page {wiki_identifier}/{page_id}: {e}")
-            return []
+        # Sentence Transformer Cosine
+        emb_step = model.encode(step, convert_to_tensor=True)
+        emb_gen = model.encode(generated_actions, convert_to_tensor=True)
+        contextual_sim = cosine_similarity([emb_step], [emb_gen])[0][0]
+        contextual_precision = contextual_sim
+        contextual_recall = contextual_sim
+        contextual_f1 = 2 * (contextual_precision * contextual_recall) / (contextual_precision + contextual_recall + 1e-8)
 
-        content = page.page.content
-        md_file = os.path.join(self.output_dir, f"page_{page_id}.md")
-        with open(md_file, "w", encoding="utf-8") as f:
-            f.write(content)
-        print(f"[✓] Wiki page saved: {md_file}")
+        step_results.append({
+            'Cosine Similarity': cosine,
+            'BLEU Score': bleu,
+            'Contextual Precision': contextual_precision,
+            'Contextual Recall': contextual_recall,
+            'Contextual F1': contextual_f1
+        })
 
-        soup = BeautifulSoup(content, "html.parser")
+    # Aggregate stepwise results (e.g., mean)
+    if step_results:
+        avg_scores = {
+            'Cosine Similarity': np.mean([r['Cosine Similarity'] for r in step_results]),
+            'BLEU Score': np.mean([r['BLEU Score'] for r in step_results]),
+            'Contextual Precision': np.mean([r['Contextual Precision'] for r in step_results]),
+            'Contextual Recall': np.mean([r['Contextual Recall'] for r in step_results]),
+            'Contextual F1': np.mean([r['Contextual F1'] for r in step_results]),
+        }
+    else:
+        avg_scores = {
+            'Cosine Similarity': np.nan,
+            'BLEU Score': np.nan,
+            'Contextual Precision': np.nan,
+            'Contextual Recall': np.nan,
+            'Contextual F1': np.nan,
+        }
 
-        for img in soup.find_all('img', src=True):
-            self.save_image(img['src'])
+    results.append({
+        col_id: user_story_id,
+        **avg_scores
+    })
 
-        try:
-            wiki_data = self.wiki_client.get_wiki(project=self.project_name, wiki_identifier=wiki_identifier)
-            repository_id = wiki_data.repository_id
-            md_attachments = re.findall(r'!\[.*?\]\((.*?)\)', content)
-            for rel_path in md_attachments:
-                encoded_path = quote(rel_path)
-                attachment_url = (
-                    f"https://dev.azure.com/symphonyvsts/"
-                    f"{quote(self.project_name)}/_apis/git/repositories/{repository_id}/Items"
-                    f"?path={encoded_path}&download=false&resolveLfs=true&$format=octetStream"
-                )
-                resp = requests.get(attachment_url, auth=requests.auth.HTTPBasicAuth('', self.pat_token))
-                if resp.status_code in (200, 203):
-                    filename = os.path.basename(encoded_path)
-                    image_path = os.path.join(self.output_dir, "images", filename)
-                    with open(image_path, "wb") as f:
-                        f.write(resp.content)
-                    print(f"[✓] Markdown image saved: {image_path}")
-                else:
-                    print(f"[!] Skipped non-image or failed download: {rel_path} (status {resp.status_code})")
-        except Exception as e:
-            print(f"[!] Markdown image handling failed: {e}")
+# Map results back to the original DataFrame
+score_dict = {row[col_id]: row for row in results}
+df['Cosine Similarity'] = np.nan
+df['BLEU Score'] = np.nan
+df['Contextual Precision'] = np.nan
+df['Contextual Recall'] = np.nan
+df['Contextual F1'] = np.nan
 
-        html_links = [a['href'] for a in soup.find_all('a', href=True)]
-        markdown_links = re.findall(r'\[[^\]]*\]\((.*?)\)', content)
-        wiki_syntax_links = re.findall(r'\[\[([^\]|]+)(?:\|[^\]]+)?\]\]', content)
-        wiki_style_internal_links = [
-            f"/{self.project_name}/_wiki/wikis/{wiki_identifier}/pages?path=/{quote(title.strip())}"
-            for title in wiki_syntax_links
-        ]
+for idx, row in df.iterrows():
+    user_story_id = row[col_id]
+    if pd.notna(user_story_id) and user_story_id in score_dict:
+        df.at[idx, 'Cosine Similarity'] = round(score_dict[user_story_id]['Cosine Similarity'], 4)
+        df.at[idx, 'BLEU Score'] = round(score_dict[user_story_id]['BLEU Score'], 4)
+        df.at[idx, 'Contextual Precision'] = round(score_dict[user_story_id]['Contextual Precision'], 4)
+        df.at[idx, 'Contextual Recall'] = round(score_dict[user_story_id]['Contextual Recall'], 4)
+        df.at[idx, 'Contextual F1'] = round(score_dict[user_story_id]['Contextual F1'], 4)
 
-        all_links = list(set(html_links + markdown_links + wiki_style_internal_links))
-        self.all_urls.update(all_links)
-
-        internal_links = []
-        for link in all_links:
-            if link.startswith('/'):
-                if "pages?path=" in link:
-                    internal_links.append(link)
-                else:
-                    normalized_link = f"/{self.project_name}/_wiki/wikis/{wiki_identifier}/pages?path={quote(link)}"
-                    internal_links.append(normalized_link)
-        return internal_links
-
-    def crawl(self):
-        path_parts = self.parsed_url.path.strip('/').split('/')
-        initial_wiki_identifier = path_parts[4]
-        initial_page_id = path_parts[5]
-
-        def crawl_recursive(wiki_identifier, page_id, depth):
-            if depth > self.max_depth:
-                return
-            key = f"{wiki_identifier}_{page_id}"
-            if key in self.visited_pages:
-                return
-            self.visited_pages.add(key)
-
-            links = self.process_page(wiki_identifier, page_id)
-
-            for link in links:
-                try:
-                    if "/_wiki/wikis/" in link:
-                        if "pages?path=" in link:
-                            splitted = urlsplit(link)
-                            qs = parse_qs(splitted.query)
-                            page_path = qs.get("path", [None])[0]
-                            if not page_path or page_path in ["/_TOC_", "/_Header", "/_Footer"]:
-                                continue
-                            page_data = self.get_page_by_path_rest(wiki_identifier, page_path)
-                            if page_data:
-                                new_page_id = page_data.get("id")
-                                if new_page_id:
-                                    crawl_recursive(wiki_identifier, new_page_id, depth + 1)
-                        else:
-                            segments = urlsplit(link).path.strip('/').split('/')
-                            try:
-                                wiki_index = segments.index('_wiki')
-                                wiki_identifier = segments[wiki_index + 2]
-                                if 'pages' in segments:
-                                    page_index = segments.index('pages')
-                                    page_id = segments[page_index + 1]
-                                    if page_id.isdigit():
-                                        crawl_recursive(wiki_identifier, page_id, depth + 1)
-                            except (ValueError, IndexError):
-                                continue
-                except Exception as e:
-                    print(f"[!] Error processing link {link}: {e}")
-                    continue
-
-        crawl_recursive(initial_wiki_identifier, initial_page_id, 1)
-
-        # Save all collected URLs to a file
-        url_file = os.path.join(self.output_dir, "crawled_urls.txt")
-        with open(url_file, "w", encoding="utf-8") as f:
-            for url in sorted(self.all_urls):
-                f.write(url + "\n")
-        print(f"[✓] All URLs saved to: {url_file}")
+# Save result to CSV
+df.to_csv("UserStory_Testcase_Scored_Final.csv", index=False)
+print("✅ File saved: UserStory_Testcase_Scored_Final.csv")
