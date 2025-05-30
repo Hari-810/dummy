@@ -1,0 +1,130 @@
+User Story ID,User Story Title,User Story Description,Acceptance Criteria,ADO Testcase,,,,,Generated Testcase,,,,,Cosine Similarity,Contextual Precision,Contextual Recall
+,,,,Test Case Title,Steps,Action,Excepted Output,,Test Case Title,Steps,Action,Excepted Output,,,,
+4346068,DWP | AQM | EOE | Concurrency records are not purged at EOE - Retest only,"As an Omnia user
+
+I want to concurrency records purged for all work items in the engagement upon end of engagement
+
+  
+
+Note : No action needed during EOE, we want to keep the concurrency data for engagement.
+
+QA - 1
+
+  
+
+![Image](https://dev.azure.com/symphonyvsts/604f3b75-6a79-4537-896f-6798f9e0aff8/_apis/wit/attachments/3a8c5978-8641-4304-b6ef-bac4f50f99d3?fileName=image.png)","**Given** I am an Omnia user where other users were making changes within the tabs of AQM
+
+**When** I export reach the end of the engagement
+
+**Then** the system should not purge concurrency records for all work items in the engagement
+
+  
+
+**Testing Considerations:**
+
+******Technical Checklist******
+
+1.  ****Architecture/Design document****
+2.  ****DevOps dependencies****
+3.  ****Defensive checks Implemented  
+    ****
+4.  ****Database update scripts****
+5.  ****Unit and Integration tests****
+6.  ****Local SPR verification and remediation****
+7.  ****Static code scan verification and remediation****
+8.  ****SonarQube Quality gate verification and remediation****
+9.  ****Health check updates and remediation****
+10.  ****Application insights verification and remediation****
+11.  ****Monitoring and Azure Workbook updates****
+12.  ****Data Validation****
+13.  ****Verify the CI/user data fields identified by PO not included in logging****
+
+  
+vvv",DWP | AQM | Verify the concurrency records are not purged after Engagement Archive,1,"Precondition 
+- Login to the Omnia portal using valid credentials.
+- Create an active Engagement ",,,Verify concurrency records are retained at End of Engagement (EOE),1,Given I am an Omnia user where other users were making changes within the tabs of AQM,Concurrency data is generated and associated with relevant work items,,85,88,93
+,,,,,2,Open the above created Engagement ,User should be navigated to the Engagement Home page,,,2,When I export or reach the end of the engagement,The system does not purge concurrency records for any work items,,,,
+,,,,,3,Click Engagement Status --> Audit Quality Milestones,The Audit Quality Milestones should be opened.,,,3,Then Concurrency records remain intact post engagement closure,Concurrency data is retained in the database for all work items within the engagement,,,,
+,,,,,4,Complete the AQM Set up,The AQM Setup should be completed,,,,,,,,,
+,,,,,5,Set the Data in all AQM Milestones,The data should be setup in all AQM Milestones,,,,,,,,,
+,,,,,6,Navigate to the DB and open the shard where the above created engagement is present,The shard should be opened where the above created engagement is present.,,,,,,,,,
+,,,,,7,"Open the concurrency table using 
+
+Select * from aqm.ConcurrencyCheck where EngagementId=""""
+
+And Verify the the concurrency data is present and not purged.",The Concurrency data should be present and not purged.,,,,,,,,,
+,,,,,8,Complete the Archive set up and Archive the engagement.,The engagement should be archived.,,Validate no action is triggered to purge concurrency at EOE,1,Given Engagement is marked as End of Engagement (EOE),No automatic purge process is triggered for concurrency data,,,,
+,,,,,9,"Again open the concurrency table using 
+
+Select * from aqm.ConcurrencyCheck where EngagementId=""""
+
+And Verify the the concurrency data is present and not purged.",The Concurrency data should be present and should not be purged even after EOE.,,,2,When System performs end-of-engagement operations,Concurrency records are excluded from deletion scripts or workflows,,,,
+,,,,,,,,,,3,Then All concurrency data remains untouched post engagement closure,Concurrency records for the engagement remain unchanged in the system,,,,
+4428766,DWP | AQM | Concurrency | Handle API concurrency error on SAVE Failure,"As an Omnia user   
+
+I want the system to handle concurrency failures on Save API   
+
+So that I can understand the issue and avoid conflicting changes  
+
+  
+
+**Dev Notes:**
+
+-   If response status code from Save API is 409, treat this as concurrency failure
+
+-   mark page as read only so user is not allowed to make any more edits until refresh page  
+    
+
+QA - 2","**Scenario**: Receive a 409 status code from the Save API     
+
+**Given** I am making changes in the AQM
+
+**When** I attempt to save these changes     
+
+**And** the Save API returns a 409 status code     
+
+**Then** the system treats this as a concurrency failure    
+
+**And** all fields in the application become read-only to prevent further changes  
+
+******Technical Checklist******
+
+1.  ****Architecture/Design document****
+2.  ****DevOps dependencies****
+3.  ****Defensive checks Implemented  
+    ****
+4.  ****Database update scripts****
+5.  ****Unit and Integration tests****
+6.  ****Local SPR verification and remediation****
+7.  ****Static code scan verification and remediation****
+8.  ****SonarQube Quality gate verification and remediation****
+9.  ****Health check updates and remediation****
+10.  ****Application insights verification and remediation****
+11.  ****Monitoring and Azure Workbook updates****
+12.  ****Data Validation****
+13.  ****Verify the CI/user data fields identified by PO not included in logging****",DWP | AQM | Verify the concurrency API handle the save failure for response 409 status code,1,Precondtion : 1) Access https://qnxomniaame.deloitte.com/ 2) Create new engagement,Another user should be saving the same process,,Handle concurrency error when Save API returns 409,1,Given I am making changes in the AQM module,The system should allow me to make changes in the AQM module until the Save action is triggered,,81,91,89
+,,,,,2,"Use USER 1-> click on AQM 1,AQM 2,AQM 3,AQM 4 -> Activity -> ToggleON, Documentation Here, Add documents - > another user is saving the same process",User 1 and user 2 should attempt save and should be concurrency failure,,,2,When I attempt to save the changes,The system should send a Save request to the Save API,,,,
+,,,,,3,User 1 makes saving and user 2 are also attempt saving and verify save API getting failure,Then User 2 sees a concurrency banner indicating that User 1 has updated the item,,,3,Then The Save API returns a 409 status code,The system should treat this response as a concurrency failure,,,,
+,,,,,4,Verify the save API should return the 409 status code,Save API should return 409 status code,,,4,Then The system treats this as a concurrency failure\nAnd All fields in the application become read-only to prevent further changes,The user is prevented from making further edits until the page is refreshed,,,,
+,,,,,5,Verify the banner is displaying for save API ,Banner message should be displayed for save API,,Verify system behavior on Save API concurrency failure,1,When Save API response status code is 409\nThen page is marked as read-only\nAnd user is not allowed to make any more edits,"All input fields and actions are disabled, and user is informed about the concurrency issue",,,,
+,,,,,6,Verify the all fields of applications are displaying only readonly mode,All fields should be displayed read only,,,2,When page is marked as read-only\nThen user cannot perform any further modifications\nAnd prompt for page refresh may be shown,User interface disables all inputs and indicates that changes cannot be made without refreshing,,,,
+,,,,,,,,,,1,"Given User 1 is actively making edits on the AQM dashboard
+And User 2 is idle on the same horizontal tab
+When User 1 clicks save",Then User 2 sees a concurrency banner indicating that User 1 has updated the item,,,,
+,,,,,,,,,,2,And User 2 is prevented from saving their changes,Then the save action for User 2 is disabled until refresh,,,,
+,,,,,,,,,,1,"Given User 1 and User 2 are on the same horizontal tab of AQM dashboard
+When User 1 saves their changes first",Then User 2 sees a concurrency banner stating that User 1 has updated the item,,,,
+,,,,,,,,,,2,And User 2 is not allowed to save their changes,Then User 2's save action is disabled,,,,
+,,,,,,,,,,1,"Given User 1 is editing AQM tab 2
+And User 2 is editing AQM tab 3
+When both users save their changes",Then there are no concurrency issues,,,,
+,,,,,,,,,,2,And both changes are successfully saved,Then both users receive confirmation of successful saves,,,,
+,,,,,,,,,,1,"Given User 1 is actively editing an AQM dashboard tab and User 2 is idle on the same tab
+When User 1 saves their changes",Then User 2 sees a concurrency banner stating that User 1 has updated the item,,,,
+,,,,,,,,,,2,And User 2 is not allowed to save their changes,Then User 2's save action is prohibited,,,,
+,,,,,,,,,,1,"Given User 1 has saved changes and the concurrency banner is displayed for User 2
+When User 2 tries to save their changes",Then User 2 receives an error message preventing the save,,,,
+,,,,,,,,,,1,"Given User 1 and User 2 are both making changes to the same horizontal tab of AQM dashboard
+When either user saves their changes",Then only one concurrency banner is displayed for User 2,,,,
+,,,,,,,,,,2,And User 2 is informed they cannot save until the page is refreshed,Then User 2 is clearly notified of the need to refresh,,,,
+,,,,,,,,,,3,When concurrency failure is triggered\nThen application logs error without including CI/user data fields identified by PO,"Sensitive user data is not included in logging as per security guidelines""",,,,
