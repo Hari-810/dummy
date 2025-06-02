@@ -84,45 +84,44 @@ score_headers = ["TFIDF Cosine Similarity (%)", "BLEU Score (%)", "Contextual Pr
 for i, header in enumerate(score_headers):
     ws.cell(row=2, column=start_col + i, value=header)
 
-# Write scores starting from row 3
+# Write individual scores starting from row 3
 for idx, row in enumerate(range(3, len(df) + 3)):
     ws.cell(row=row, column=start_col, value=tfidf_scores[idx])
     ws.cell(row=row, column=start_col + 1, value=bleu_scores[idx])
     ws.cell(row=row, column=start_col + 2, value=contextual_scores[idx])
 
 # === Compute Average Scores per User Story ===
-user_story_list = df[user_story_col].tolist()
-grouped_scores = defaultdict(lambda: {"tfidf": [], "bleu": [], "contextual": []})
+grouped = df.groupby(user_story_col)
+group_averages = {}
 
-for idx, story in enumerate(user_story_list):
-    if tfidf_scores[idx] is not None:
-        grouped_scores[story]["tfidf"].append(tfidf_scores[idx])
-    if bleu_scores[idx] is not None:
-        grouped_scores[story]["bleu"].append(bleu_scores[idx])
-    if contextual_scores[idx] is not None:
-        grouped_scores[story]["contextual"].append(contextual_scores[idx])
+for story, group in grouped:
+    indices = group.index.tolist()
+    # Extract scores for this group by indices
+    group_tfidf = [tfidf_scores[i] for i in indices if tfidf_scores[i] is not None]
+    group_bleu = [bleu_scores[i] for i in indices if bleu_scores[i] is not None]
+    group_contextual = [contextual_scores[i] for i in indices if contextual_scores[i] is not None]
 
-# Compute group averages
-avg_tfidf, avg_bleu, avg_contextual = [], [], []
-for story in user_story_list:
-    tfidf_avg = np.mean(grouped_scores[story]["tfidf"]) if grouped_scores[story]["tfidf"] else None
-    bleu_avg = np.mean(grouped_scores[story]["bleu"]) if grouped_scores[story]["bleu"] else None
-    contextual_avg = np.mean(grouped_scores[story]["contextual"]) if grouped_scores[story]["contextual"] else None
-    avg_tfidf.append(int(round(tfidf_avg)) if tfidf_avg is not None else None)
-    avg_bleu.append(int(round(bleu_avg)) if bleu_avg is not None else None)
-    avg_contextual.append(int(round(contextual_avg)) if contextual_avg is not None else None)
+    avg_tfidf = int(round(np.mean(group_tfidf))) if group_tfidf else None
+    avg_bleu = int(round(np.mean(group_bleu))) if group_bleu else None
+    avg_contextual = int(round(np.mean(group_contextual))) if group_contextual else None
 
-# Add average score headers
+    group_averages[story] = (avg_tfidf, avg_bleu, avg_contextual)
+
+# Add average score headers (3 columns after individual scores)
 avg_headers = ["Avg TFIDF Score (%)", "Avg BLEU Score (%)", "Avg Contextual Precision (%)"]
 for i, header in enumerate(avg_headers):
     ws.cell(row=2, column=start_col + 3 + i, value=header)
 
-# Write averages starting from row 3
-for idx, row in enumerate(range(3, len(df) + 3)):
-    ws.cell(row=row, column=start_col + 3, value=avg_tfidf[idx])
-    ws.cell(row=row, column=start_col + 4, value=avg_bleu[idx])
-    ws.cell(row=row, column=start_col + 5, value=avg_contextual[idx])
+# Write averages only once per group at the first row of the group
+row_offset = 3  # Because data starts at Excel row 3
+for story, group in grouped:
+    avg_tfidf, avg_bleu, avg_contextual = group_averages[story]
+    first_row = group.index.min() + row_offset  # Excel row number for the first row of this group
+
+    ws.cell(row=first_row, column=start_col + 3, value=avg_tfidf)
+    ws.cell(row=first_row, column=start_col + 4, value=avg_bleu)
+    ws.cell(row=first_row, column=start_col + 5, value=avg_contextual)
 
 # Save final Excel
 wb.save(output_excel)
-print(f"✅ Final Excel with scores and averages saved to: {output_excel}")
+print(f"✅ Final Excel with scores and grouped averages saved to: {output_excel}")
