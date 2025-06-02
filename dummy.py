@@ -7,7 +7,6 @@ from sklearn.metrics.pairwise import cosine_similarity
 from sentence_transformers import SentenceTransformer
 from tqdm import tqdm
 from openpyxl import load_workbook
-from collections import defaultdict
 
 # Load NLP models
 nlp = spacy.load("en_core_web_sm")
@@ -29,7 +28,7 @@ df[ado_action_col] = df[ado_action_col].fillna("").str.strip()
 df[generated_action_col] = df[generated_action_col].fillna("").str.strip()
 df[user_story_col] = df[user_story_col].fillna("").str.strip()
 
-# Result storage
+# Result storage for individual scores (needed to calculate averages)
 tfidf_scores, bleu_scores, contextual_scores = [], [], []
 
 # Grouped scoring by User Story Title
@@ -72,31 +71,12 @@ for story, group in tqdm(df.groupby(user_story_col), desc="Processing User Stori
         bleu_scores.append(int(round(bleu_best * 100)))
         contextual_scores.append(int(round(contextual_best * 100)))
 
-# Load workbook without disturbing formatting
-wb = load_workbook(input_excel)
-ws = wb.active
-
-# Determine new column positions
-start_col = ws.max_column + 1
-
-# Score headers
-score_headers = ["TFIDF Cosine Similarity (%)", "BLEU Score (%)", "Contextual Precision (%)"]
-for i, header in enumerate(score_headers):
-    ws.cell(row=2, column=start_col + i, value=header)
-
-# Write individual scores starting from row 3
-for idx, row in enumerate(range(3, len(df) + 3)):
-    ws.cell(row=row, column=start_col, value=tfidf_scores[idx])
-    ws.cell(row=row, column=start_col + 1, value=bleu_scores[idx])
-    ws.cell(row=row, column=start_col + 2, value=contextual_scores[idx])
-
-# === Compute Average Scores per User Story ===
+# Compute average scores per User Story group
 grouped = df.groupby(user_story_col)
 group_averages = {}
 
 for story, group in grouped:
     indices = group.index.tolist()
-    # Extract scores for this group by indices
     group_tfidf = [tfidf_scores[i] for i in indices if tfidf_scores[i] is not None]
     group_bleu = [bleu_scores[i] for i in indices if bleu_scores[i] is not None]
     group_contextual = [contextual_scores[i] for i in indices if contextual_scores[i] is not None]
@@ -107,21 +87,29 @@ for story, group in grouped:
 
     group_averages[story] = (avg_tfidf, avg_bleu, avg_contextual)
 
-# Add average score headers (3 columns after individual scores)
+# Load workbook without disturbing formatting
+wb = load_workbook(input_excel)
+ws = wb.active
+
+# Determine where to put the new columns (after the last existing one)
+start_col = ws.max_column + 1
+
+# Write headers for average score columns at row 2
 avg_headers = ["Avg TFIDF Score (%)", "Avg BLEU Score (%)", "Avg Contextual Precision (%)"]
 for i, header in enumerate(avg_headers):
-    ws.cell(row=2, column=start_col + 3 + i, value=header)
+    ws.cell(row=2, column=start_col + i, value=header)
 
-# Write averages only once per group at the first row of the group
-row_offset = 3  # Because data starts at Excel row 3
+# Write average scores only once per User Story group, on the first row of that group
+row_offset = 3  # data starts at Excel row 3
 for story, group in grouped:
     avg_tfidf, avg_bleu, avg_contextual = group_averages[story]
-    first_row = group.index.min() + row_offset  # Excel row number for the first row of this group
+    first_row = group.index.min() + row_offset  # Excel row number for first row of group
 
-    ws.cell(row=first_row, column=start_col + 3, value=avg_tfidf)
-    ws.cell(row=first_row, column=start_col + 4, value=avg_bleu)
-    ws.cell(row=first_row, column=start_col + 5, value=avg_contextual)
+    ws.cell(row=first_row, column=start_col, value=avg_tfidf)
+    ws.cell(row=first_row, column=start_col + 1, value=avg_bleu)
+    ws.cell(row=first_row, column=start_col + 2, value=avg_contextual)
 
-# Save final Excel
+# Save the workbook
 wb.save(output_excel)
-print(f"✅ Final Excel with scores and grouped averages saved to: {output_excel}")
+
+print(f"✅ Final Excel with grouped average scores saved to: {output_excel}")
