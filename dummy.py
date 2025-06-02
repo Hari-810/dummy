@@ -1,127 +1,128 @@
 import pandas as pd
 import numpy as np
+import spacy
+from nltk.translate.bleu_score import sentence_bleu, SmoothingFunction
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 from sentence_transformers import SentenceTransformer
-from nltk.translate.bleu_score import sentence_bleu, SmoothingFunction
-from nltk.tokenize import TreebankWordTokenizer
-import openpyxl
+from tqdm import tqdm
+from openpyxl import load_workbook
 from collections import defaultdict
 
-# Input/Output paths
-input_excel = "your_file.xlsx"
-output_excel = "your_file_updated.xlsx"
+# Load NLP models
+nlp = spacy.load("en_core_web_sm")
+model = SentenceTransformer("all-MiniLM-L6-v2")
+smoothie = SmoothingFunction().method4
+
+# File paths
+input_excel = "AQM_TCG_Metrics_OriginalADO 1.xlsx"
+output_excel = "AQM_TCG_Metrics_OriginalADO_Scored.xlsx"
 
 # Column names
-user_story_col = "User Story Title"
-ado_col = "ADO Testcase_Action"
-generated_col = "Generated Testcase_Action"
+user_story_col = 'User Story Title'
+ado_action_col = 'Unnamed: 6'
+generated_action_col = 'Unnamed: 11'
 
-# Load Excel with formatting preserved
-df = pd.read_excel(input_excel)
-wb = openpyxl.load_workbook(input_excel)
+# Read the Excel into a DataFrame (preserve as-is)
+df = pd.read_excel(input_excel, dtype=str)
+df[ado_action_col] = df[ado_action_col].fillna("").str.strip()
+df[generated_action_col] = df[generated_action_col].fillna("").str.strip()
+df[user_story_col] = df[user_story_col].fillna("").str.strip()
+
+# Result storage
+tfidf_scores, bleu_scores, contextual_scores = [], [], []
+
+# Grouped scoring by User Story Title
+for story, group in tqdm(df.groupby(user_story_col), desc="Processing User Stories"):
+    ado_actions = group[ado_action_col].tolist()
+    generated_actions = group[generated_action_col].tolist()
+    generated_actions = [x for x in generated_actions if x]
+
+    if not generated_actions:
+        tfidf_scores.extend([None] * len(group))
+        bleu_scores.extend([None] * len(group))
+        contextual_scores.extend([None] * len(group))
+        continue
+
+    gen_bleu_tokens = [list(token.text for token in nlp(step)) for step in generated_actions]
+    gen_tfidf = TfidfVectorizer().fit(generated_actions)
+    gen_vectors = gen_tfidf.transform(generated_actions)
+    gen_embeddings = model.encode(generated_actions, convert_to_tensor=True)
+
+    for ado in ado_actions:
+        if not ado:
+            tfidf_scores.append(None)
+            bleu_scores.append(None)
+            contextual_scores.append(None)
+            continue
+
+        ado_vec = gen_tfidf.transform([ado])
+        tfidf_sim = cosine_similarity(ado_vec, gen_vectors)[0]
+        tfidf_best = np.max(tfidf_sim)
+
+        ado_tokens = [token.text for token in nlp(ado)]
+        bleu_vals = [sentence_bleu([gen], ado_tokens, smoothing_function=smoothie) for gen in gen_bleu_tokens]
+        bleu_best = max(bleu_vals)
+
+        ado_emb = model.encode(ado, convert_to_tensor=True)
+        contextual_sim = cosine_similarity([ado_emb], gen_embeddings)[0]
+        contextual_best = np.max(contextual_sim)
+
+        tfidf_scores.append(int(round(tfidf_best * 100)))
+        bleu_scores.append(int(round(bleu_best * 100)))
+        contextual_scores.append(int(round(contextual_best * 100)))
+
+# Load workbook without disturbing formatting
+wb = load_workbook(input_excel)
 ws = wb.active
 
-# Initialize models
-tokenizer = TreebankWordTokenizer()
-model = SentenceTransformer("all-MiniLM-L6-v2")
+# Determine new column positions
+start_col = ws.max_column + 1
 
-# Score storage
-tfidf_scores = []
-bleu_scores = []
-contextual_scores = []
+# Score headers
+score_headers = ["TFIDF Cosine Similarity (%)", "BLEU Score (%)", "Contextual Precision (%)"]
+for i, header in enumerate(score_headers):
+    ws.cell(row=2, column=start_col + i, value=header)
 
-# Process row-wise
-for i, row in df.iterrows():
-    ado_action = row.get(ado_col)
-    gen_actions = row.get(generated_col)
+# Write scores starting from row 3
+for idx, row in enumerate(range(3, len(df) + 3)):
+    ws.cell(row=row, column=start_col, value=tfidf_scores[idx])
+    ws.cell(row=row, column=start_col + 1, value=bleu_scores[idx])
+    ws.cell(row=row, column=start_col + 2, value=contextual_scores[idx])
 
-    if pd.isna(ado_action) or not isinstance(ado_action, str) or not ado_action.strip():
-        tfidf_scores.append(None)
-        bleu_scores.append(None)
-        contextual_scores.append(None)
-        continue
+# === Compute Average Scores per User Story ===
+user_story_list = df[user_story_col].tolist()
+grouped_scores = defaultdict(lambda: {"tfidf": [], "bleu": [], "contextual": []})
 
-    # Split multiline actions
-    ado_steps = [s.strip() for s in ado_action.strip().split("\n") if s.strip()]
-    gen_steps = [s.strip() for s in str(gen_actions).strip().split("\n") if isinstance(gen_actions, str) and s.strip()]
+for idx, story in enumerate(user_story_list):
+    if tfidf_scores[idx] is not None:
+        grouped_scores[story]["tfidf"].append(tfidf_scores[idx])
+    if bleu_scores[idx] is not None:
+        grouped_scores[story]["bleu"].append(bleu_scores[idx])
+    if contextual_scores[idx] is not None:
+        grouped_scores[story]["contextual"].append(contextual_scores[idx])
 
-    tfidf_match_scores = []
-    bleu_match_scores = []
-    contextual_match_scores = []
+# Compute group averages
+avg_tfidf, avg_bleu, avg_contextual = [], [], []
+for story in user_story_list:
+    tfidf_avg = np.mean(grouped_scores[story]["tfidf"]) if grouped_scores[story]["tfidf"] else None
+    bleu_avg = np.mean(grouped_scores[story]["bleu"]) if grouped_scores[story]["bleu"] else None
+    contextual_avg = np.mean(grouped_scores[story]["contextual"]) if grouped_scores[story]["contextual"] else None
+    avg_tfidf.append(int(round(tfidf_avg)) if tfidf_avg is not None else None)
+    avg_bleu.append(int(round(bleu_avg)) if bleu_avg is not None else None)
+    avg_contextual.append(int(round(contextual_avg)) if contextual_avg is not None else None)
 
-    for ado_step in ado_steps:
-        # BLEU
-        bleu_vals = []
-        reference = tokenizer.tokenize(ado_step)
-        for gen_step in gen_steps:
-            candidate = tokenizer.tokenize(gen_step)
-            bleu = sentence_bleu([reference], candidate, smoothing_function=SmoothingFunction().method1)
-            bleu_vals.append(bleu * 100)
+# Add average score headers
+avg_headers = ["Avg TFIDF Score (%)", "Avg BLEU Score (%)", "Avg Contextual Precision (%)"]
+for i, header in enumerate(avg_headers):
+    ws.cell(row=2, column=start_col + 3 + i, value=header)
 
-        # TF-IDF Cosine
-        tfidf = TfidfVectorizer().fit_transform([ado_step] + gen_steps)
-        cosine_similarities = cosine_similarity(tfidf[0:1], tfidf[1:]).flatten() * 100
-
-        # Contextual Similarity
-        emb = model.encode([ado_step] + gen_steps)
-        contextual_sim = cosine_similarity([emb[0]], emb[1:]).flatten() * 100
-
-        tfidf_match_scores.append(np.max(cosine_similarities) if len(cosine_similarities) > 0 else 0)
-        bleu_match_scores.append(np.max(bleu_vals) if bleu_vals else 0)
-        contextual_match_scores.append(np.max(contextual_sim) if len(contextual_sim) > 0 else 0)
-
-    tfidf_scores.append(round(np.mean(tfidf_match_scores)))
-    bleu_scores.append(round(np.mean(bleu_match_scores)))
-    contextual_scores.append(round(np.mean(contextual_match_scores)))
-
-# Find starting column index
-start_col = len(df.columns) + 1
-ws.cell(row=1, column=start_col, value="TFIDF Score (%)")
-ws.cell(row=1, column=start_col + 1, value="BLEU Score (%)")
-ws.cell(row=1, column=start_col + 2, value="Contextual Score (%)")
-
-# Write scores row-wise
-for i, (tfidf, bleu, contextual) in enumerate(zip(tfidf_scores, bleu_scores, contextual_scores), start=2):
-    if tfidf is not None:
-        ws.cell(row=i, column=start_col, value=tfidf)
-    if bleu is not None:
-        ws.cell(row=i, column=start_col + 1, value=bleu)
-    if contextual is not None:
-        ws.cell(row=i, column=start_col + 2, value=contextual)
-
-# Step 2: Compute average scores by User Story Title
-grouped_scores = defaultdict(lambda: {"tfidf": [], "bleu": [], "contextual": [], "start_row": None})
-
-for i, row in enumerate(range(2, len(df) + 2)):
-    title = df.loc[i, user_story_col]
-    if not title:
-        continue
-    if grouped_scores[title]["start_row"] is None:
-        grouped_scores[title]["start_row"] = row
-    if tfidf_scores[i] is not None:
-        grouped_scores[title]["tfidf"].append(tfidf_scores[i])
-    if bleu_scores[i] is not None:
-        grouped_scores[title]["bleu"].append(bleu_scores[i])
-    if contextual_scores[i] is not None:
-        grouped_scores[title]["contextual"].append(contextual_scores[i])
-
-# Step 3: Write average values
-avg_col_start = start_col + 3
-ws.cell(row=1, column=avg_col_start, value="Avg TFIDF Score (%)")
-ws.cell(row=1, column=avg_col_start + 1, value="Avg BLEU Score (%)")
-ws.cell(row=1, column=avg_col_start + 2, value="Avg Contextual Score (%)")
-
-for title, data in grouped_scores.items():
-    row = data["start_row"]
-    avg_tfidf = round(np.mean(data["tfidf"])) if data["tfidf"] else None
-    avg_bleu = round(np.mean(data["bleu"])) if data["bleu"] else None
-    avg_contextual = round(np.mean(data["contextual"])) if data["contextual"] else None
-
-    ws.cell(row=row, column=avg_col_start, value=avg_tfidf)
-    ws.cell(row=row, column=avg_col_start + 1, value=avg_bleu)
-    ws.cell(row=row, column=avg_col_start + 2, value=avg_contextual)
+# Write averages starting from row 3
+for idx, row in enumerate(range(3, len(df) + 3)):
+    ws.cell(row=row, column=start_col + 3, value=avg_tfidf[idx])
+    ws.cell(row=row, column=start_col + 4, value=avg_bleu[idx])
+    ws.cell(row=row, column=start_col + 5, value=avg_contextual[idx])
 
 # Save final Excel
 wb.save(output_excel)
-print(f"✅ Final Excel file saved with individual and average scores: {output_excel}")
+print(f"✅ Final Excel with scores and averages saved to: {output_excel}")
