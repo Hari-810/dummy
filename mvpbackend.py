@@ -1,177 +1,260 @@
-from azure.devops.connection import Connection
-from msrest.authentication import BasicAuthentication
-import json
-from bs4 import BeautifulSoup
-from azure.devops.v7_1.work_item_tracking import Wiql
-from azure.devops.v7_1.work_item_tracking import AttachmentReference
-import pandas as pd
-import time
-start_time=time.time()
-########## credential connection
-personal_access_token = '1lObibwEdpFlnKvb3zVeiMUaxLIrWiW45WcaHj4mHlfmUIkHEC6nJQQJ99BEACAAAAAxJCnnAAASAZDO1u6x'# replace your code
-organization_url = "https://dev.azure.com/symphonyvsts" # replace organization name 'https://dev.azure.com/symphonyvsts'
-project_name ="Audit AIML" # replace project name 'Audit AIML' 
+from fastapi import FastAPI, UploadFile, File, Form, Depends, HTTPException
+from fastapi.responses import JSONResponse
+from typing import List, Dict, Any, Optional, Union
+from enum import Enum
+import logging
+import io
+import os
+from pydantic import BaseModel
 
-credentials = BasicAuthentication("", personal_access_token)
-connection = Connection(base_url=organization_url, creds=credentials)
+# Import RAG components
+from rag.rag_pipeline import RAGPipeline
+from rag.knowledge_base import KnowledgeBaseManager
+from rag.config import RAG_RELEVANCE_THRESHOLD
 
-wit_client = connection.clients.get_work_item_tracking_client()
+# Import LLM model
+from config.model_config import ModelInitialization
 
+# Configure logging
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+logger = logging.getLogger(__name__)
 
-fields=wit_client.get_fields(project=project_name)
-# Print all field names and references
-for field in fields:
-    print(f"{field.name} → {field.reference_name}")
+# Initialize FastAPI app
+app = FastAPI(
+    title="RAG API", 
+    version="1.0.0", 
+    description="API for Retrieval Augmented Generation with separate vector stores for tabular and textual data"
+)
 
+# Define Enums for data categories
+class DataCategory(str, Enum):
+    TEXTUAL = "Textual"
+    TABULAR = "Tabular"
 
-core_client = connection.clients.get_core_client()  #  Core client to access projects 
-projects = core_client.get_projects() # List all projects
-print("Azure DevOps Projects:")
-for project in projects:
-    print(f"- {project.name}")
+# Define request/response models
+class SyncResponse(BaseModel):
+    total_chunks: int
+    new_chunks: int
+    duplicates: int
+    filenames: List[str]
+    success: bool
+    message: str
 
+class RetrievalRequest(BaseModel):
+    query: str
+    top_k: int = 3
+    data_category: DataCategory
+    schema_details: Optional[Dict[str, Any]] = None
+    relevance_threshold: Optional[float] = RAG_RELEVANCE_THRESHOLD
 
+class RetrievalResponse(BaseModel):
+    chunks: List[Dict[str, Any]]
+    success: bool
+    message: str
 
+# Initialize the LLM model 
+def get_llm_model():
+    model_init = ModelInitialization()
+    return model_init.get_llm_model()
 
-wiql_query = f"""
-SELECT [System.Id]
-FROM WorkItems
-WHERE [System.TeamProject] = '{project_name}'
-ORDER BY [System.Id] ASC
-"""
-wiql = Wiql(query=wiql_query)
-query_result = wit_client.query_by_wiql(wiql=wiql)
+# Initialize the RAG pipeline
+def get_rag_pipeline(llm_model=Depends(get_llm_model)):
+    return RAGPipeline(llm_model)
 
-work_item_ids = [item.id for item in query_result.work_items]
-print(f"Found {len(work_item_ids)} work items")
-print(work_item_ids)
-# work_item_ids = work_item_ids[:1000]
+# Initialize the knowledge base manager
+def get_kb_manager():
+    return KnowledgeBaseManager()
 
-
-def parse_html(html_content):
-    soup = BeautifulSoup(html_content or "", "html.parser")
-    text = soup.get_text(separator="\n")
-    links = [a['href'] for a in soup.find_all('a', href=True)]
-    images = [img['src'] for img in soup.find_all('img', src=True)]
-
-    return {
-        "text": text,
-        "links": links,
-        "images": images
-    }
-
-all_items = []
-fields_to_fetch = [
-    "System.Id",
-    "System.Title",
-    "System.WorkItemType",
-    "System.Description",
-    "Microsoft.VSTS.Common.AcceptanceCriteria",
-    "Custom.BusinessOutcomeHypothesis",
-    "System.Parent"
-]
-
-batch_size = 200
-for i in range(0, len(work_item_ids), batch_size):
-    batch_ids = work_item_ids[i:i+batch_size]
-    work_items = wit_client.get_work_items(ids=batch_ids, fields=fields_to_fetch)
-    all_items.append(work_items)
-
-
-#all item data extraction 
-records = []
-
-for items in all_items:
-    for item in items:
-        fields = item.fields
-        try:
-            records.append({
-                "id": int(fields.get("System.Id", "")),
-                "title": fields.get("System.Title", ""),
-                "work_item_type": fields.get("System.WorkItemType", ""),
-                "description": parse_html(fields.get("System.Description", "")),
-                "acceptance_criteria": parse_html(fields.get("Microsoft.VSTS.Common.AcceptanceCriteria", "")),
-                "business_outcome_hypothesis": fields.get("Custom.BusinessOutcomeHypothesis", ""),
-                "parent":fields.get("System.Parent","")
-            })
-        except:
-            pass
-
-df=pd.DataFrame(records)
-df.to_csv('extract_ado1.csv')
-df.head()
-
-
-
-def workitem_details(data):
-    return {
-    "epic_id": data.get("id",""),
-    "title": data.get("title", ""),
-    "description": data.get("description", ""),
-    "work_item_type": data.get("work_item_type", ""),
-    "description": (data.get("description", "")),
-    "acceptance_criteria": (data.get("acceptance_criteria", "")),
-    "business_outcome_hypothesis": data.get("business_outcome_hypothesis", "")
-    }
-def convert_into_hierarchy(df):
-    epics = df[df['work_item_type'] == 'Epic']
-    hierarchy = []
-    for _, epic in epics.iterrows():
-        epic_block = {
-            "epic_id": epic["id"],
-            "epic_content":workitem_details(epic),
-            "features": []
-        }
-        features = df[(df['work_item_type'] == 'Feature') & (df['parent'] == epic["id"])]
-        for _, feature in features.iterrows():
-            feature_block = {
-                "feature_id": feature["id"],
-                "feature_content":workitem_details(feature),
-                "user_stories": []
-            }
-            user_stories = df[(df['work_item_type'] == 'User Story') & (df['parent'] == feature["id"])]
-            for _, us in user_stories.iterrows():
-                tasks = df[(df['work_item_type'] == 'Task') & (df['parent'] == us["id"])]
-                task_blocks = []
-                for _, task in tasks.iterrows():
-                    task_blocks.append({
-                        "task_id": task["id"],
-                        "task_content":workitem_details(task),
-                    })
-                us_block = {
-                    "user_story_id": us["id"],
-                    "user_story_content":workitem_details(us),
-                    "tasks": task_blocks
-                }
-                feature_block["user_stories"].append(us_block)
-            epic_block["features"].append(feature_block)
-        hierarchy.append(epic_block)
-    return hierarchy
-
-result=convert_into_hierarchy(df)
-
-
-
-with open("nested_hierarchy.json", "w", encoding="utf-8") as f:
-    json.dump(result, f, indent=4, ensure_ascii=False)
-
-
-end_time=time.time()
-total_timings=end_time-start_time
-print(f"total timing {total_timings:.2f} seconds")
-
-
-
-
-from urllib.parse import urlparse
-wiki_url = 'https://dev.azure.com/symphonyvsts/Audit%20AIML/_wiki/wikis/Audit-AIML.wiki/178790/API-Testing-Using-VS-Code'
-parsed = urlparse(wiki_url)
-path_parts = parsed.path.strip('/').split('/')
-wiki_identifier = path_parts[4] 
-page_path_parts = path_parts[5:]
-wiki_client = connection.clients.get_wiki_client()
-i=wiki_client.get_page_by_id(project=project_name,wiki_identifier=wiki_identifier,id=page_path_parts[0],include_content=True)
-content=i.page.content
-
-
+# Create a class to mimic Streamlit's UploadedFile interface
+class StreamlitUploadedFile:
+    def __init__(self, filename, content):
+        self.name = filename
+        self._content = content
     
+    def getvalue(self):
+        return self._content
+        
+@app.post("/rag/sync", response_model=SyncResponse)
+async def sync_files_to_kb(
+    data_category: DataCategory = Form(...),
+    sync_to_kb: bool = Form(True),
+    files: List[UploadFile] = File(...)
+):
+    """
+    Upload and sync files to the appropriate knowledge base
+    
+    - **data_category**: Whether the files are Textual (PDF, DOCX, TXT) or Tabular (CSV, XLSX, XLS)
+    - **sync_to_kb**: Whether to permanently store the files in the knowledge base
+    - **files**: The files to upload and process
+    """
+    try:
+        # Check if we have files
+        if not files:
+            return SyncResponse(
+                total_chunks=0,
+                new_chunks=0,
+                duplicates=0,
+                filenames=[],
+                success=False,
+                message="No files provided"
+            )
+        
+        # Get LLM model for pipeline
+        model_init = ModelInitialization()
+        llm_model = model_init.get_llm_model()
+        
+        # Initialize RAG pipeline
+        rag_pipeline = RAGPipeline(llm_model)
+        kb_manager = KnowledgeBaseManager()
+        
+        # Convert FastAPI UploadFile objects to a Streamlit-compatible format
+        streamlit_files = []
+        for uploaded_file in files:
+            # Filter files based on data category
+            file_ext = os.path.splitext(uploaded_file.filename)[1].lower()
+            
+            if data_category == DataCategory.TABULAR and file_ext not in ['.csv', '.xlsx', '.xls']:
+                continue
+            elif data_category == DataCategory.TEXTUAL and file_ext not in ['.pdf', '.docx', '.txt']:
+                continue
+                
+            # Read file content
+            content = await uploaded_file.read()
+            
+            # Create Streamlit-like file object
+            streamlit_file = StreamlitUploadedFile(uploaded_file.filename, content)
+            streamlit_files.append(streamlit_file)
+            
+            # Reset the file pointer for potential reuse
+            await uploaded_file.seek(0)
+        
+        if not streamlit_files:
+            return SyncResponse(
+                total_chunks=0,
+                new_chunks=0,
+                duplicates=0,
+                filenames=[],
+                success=False,
+                message=f"No valid files for {data_category} category"
+            )
+        
+        # Process the files with RAG
+        total_chunks, new_chunks, duplicates = rag_pipeline.process_documents(
+            streamlit_files, sync_to_kb=sync_to_kb, data_category=data_category.value
+        )
+        
+        # Update KB metadata if syncing
+        if sync_to_kb:
+            kb_manager.add_files_to_kb(
+                streamlit_files, new_chunks, data_category=data_category.value
+            )
+        
+        # Return the result
+        return SyncResponse(
+            total_chunks=total_chunks,
+            new_chunks=new_chunks,
+            duplicates=duplicates,
+            filenames=[f.name for f in streamlit_files],
+            success=True,
+            message=f"Successfully processed {len(streamlit_files)} files"
+        )
+    
+    except Exception as e:
+        logger.exception(f"Error syncing files: {e}")
+        return SyncResponse(
+            total_chunks=0,
+            new_chunks=0,
+            duplicates=0,
+            filenames=[f.filename for f in files],
+            success=False,
+            message=f"Error syncing files: {str(e)}"
+        )
+
+@app.post("/rag/retrieve", response_model=RetrievalResponse)
+async def retrieve_documents(
+    request: RetrievalRequest,
+    rag_pipeline: RAGPipeline = Depends(get_rag_pipeline)
+):
+    """
+    Retrieve relevant documents based on a query
+    
+    - **query**: The search query
+    - **top_k**: Maximum number of results to return
+    - **data_category**: Whether to search Textual or Tabular vector store
+    - **schema_details**: Optional schema details for tabular search
+    - **relevance_threshold**: Minimum similarity score (0-1) to include results
+    """
+    try:
+        # Handle schema-aware search for tabular data
+        if request.data_category == DataCategory.TABULAR:
+            # If schema details provided, build schema query
+            if request.schema_details:
+                # Build schema-aware query
+                schema_query = f"I need to generate synthetic data about: {request.query}\n\nThe data should include columns for:"
+                for column_name, details in request.schema_details.items():
+                    desc = details.get('field_description', '').strip()
+                    if desc:
+                        schema_query += f"\n- {column_name}: {desc}"
+                
+                # Use schema-aware search
+                retrieved_docs = rag_pipeline.tabular_vector_store.search(
+                    schema_query, 
+                    schema_details=request.schema_details, 
+                    k=request.top_k, 
+                    threshold=request.relevance_threshold
+                )
+            else:
+                # Use regular search for tabular without schema
+                retrieved_docs = rag_pipeline.tabular_vector_store.search(
+                    request.query, k=request.top_k, threshold=request.relevance_threshold
+                )
+        else:
+            # For textual data, use regular vector store
+            retrieved_docs = rag_pipeline.vector_store.search(
+                request.query, k=request.top_k, threshold=request.relevance_threshold
+            )
+        
+        # Format the response
+        chunks = []
+        for doc in retrieved_docs:
+            chunk_data = {
+                "text": doc["text"],
+                "score": doc.get("score", 0.0),
+                "metadata": doc["metadata"]
+            }
+            chunks.append(chunk_data)
+            
+        return RetrievalResponse(
+            chunks=chunks,
+            success=True,
+            message=f"Retrieved {len(chunks)} relevant chunks"
+        )
+    
+    except Exception as e:
+        logger.exception(f"Error retrieving documents: {e}")
+        return RetrievalResponse(
+            chunks=[],
+            success=False,
+            message=f"Error retrieving documents: {str(e)}"
+        )
+
+# Add health check endpoint
+@app.get("/health")
+async def health_check():
+    """Health check endpoint to verify service is running"""
+    try:
+        # Check if knowledge bases exist
+        kb_manager = get_kb_manager()
+        kb_stats = kb_manager.get_kb_stats()
+        
+        return {
+            "status": "healthy",
+            "kb_stats": kb_stats
+        }
+    except Exception as e:
+        logger.error(f"Health check failed: {e}")
+        return {"status": "unhealthy", "error": str(e)}
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("rag_api:app", host="0.0.0.0", port=8000, reload=True)
