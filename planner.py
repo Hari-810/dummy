@@ -1,472 +1,205 @@
 import json
-import re
-import logging
 import pandas as pd
-import time
-from hashlib import sha256
-from .base_generator import BaseSyntheticGenerator
-from .token_estimator import TokenEstimator
-from langchain_core.output_parsers import JsonOutputParser
-from langchain_core.prompts import PromptTemplate
-from langchain.schema import HumanMessage
-from config.constants import GENERIC_VARIABLES, TDC_VARIABLES, DATA_CATEGORY,MAX_RETRIES
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime
-import json
+import streamlit as st
+from azure.identity import DefaultAzureCredential
+from langchain_openai import AzureChatOpenAI
+import re
 
-class TabularDataGenerator(BaseSyntheticGenerator):
+st.title("Exception Summary Generator")
+
+# Upload excel file
+uploaded_file = st.file_uploader(
+    "Upload a CSV or Excel file containing exception records to generate insights using Azure GPT.",
+    type=["csv", "xls", "xlsx"],
+)
+
+def read_txt_file(file_path):
+    """ Reads a text file and returns its content """
+    with open(file_path, "r", encoding="utf-8") as f:
+        return f.read()
+    
+
+def add_line_numbers(code: str, start: int = 1) -> str:
+
+    lines = code.splitlines()
+    numbered_lines = [f"{str(i + start).rjust(4)} | {line}" for i, line in enumerate(lines)]
+    return "\n".join(numbered_lines)
+
+
+def extract_method_by_line_number(code_lines, target_line_number):
+    print(code_lines)
+    method_start = None
+    method_end = None
+    brace_count = 0
+    inside_method = False
+    method_name = None
+    total_lines = len(code_lines)
+
+    # Improved method signature pattern with method name capture
+    method_pattern = re.compile(
+        r'(public|private|protected|internal)?\s+[\w<>\[\],\s]+\s+(?P<name>\w+)\s*\(.*?\)\s*{?'
+    )
+
+    for i, line in enumerate(code_lines, start=1):
+        stripped = line.strip()
+
+        match = method_pattern.match(stripped)
+        if match:
+            method_start = i
+            brace_count = 0
+            inside_method = True
+            method_name = match.group("name")
+
+        if inside_method:
+            brace_count += stripped.count('{') - stripped.count('}')
+
+            # Check if the target line is within this method's scope
+            if method_start and method_start <= target_line_number <= i:
+                # Read ahead until method closes
+                for j in range(i, len(code_lines)):
+                    brace_count += code_lines[j].count('{') - code_lines[j].count('}')
+                    if brace_count == 0:
+                        method_end = j + 1
+                        method_content = code_lines[method_start - 1:method_end]
+                        st.markdown("method_name",method_name)
+                        print(f"\n✅ Method Name:           {method_name}")
+                        print(f"✅ Method starts at line: {method_start}")
+                        print(f"✅ Method ends at line:   {method_end}")
+                        print(f"📄 Total lines in file:   {total_lines}\n")
+                        print("🔍 Extracted Method Content:\n" + "-"*40)
+                        # print("".join(method_content))
+                        print("-"*40)
+                        return "".join(method_content)
+                    
+def generate_summary(df):
+    # Azure credential
+    credential = DefaultAzureCredential(logging_enable=True)
+    # Initialize Azure GPT
+    azure_gpt = AzureChatOpenAI(
+        azure_endpoint="https://aimlameuse2npdopenai.openai.azure.com/",
+        openai_api_version="2023-03-15-preview",
+        deployment_name="gpt-4o-mini-v2024-07-18-ptu",
+        azure_ad_token_provider=lambda: credential.get_token(
+            "https://cognitiveservices.azure.com/.default"
+        ).token,
+        temperature=0.1, 
+        seed=42, 
+        top_p=0.9, 
+        frequency_penalty=0.1, 
+        presence_penalty=0.1
+    )
+    data_json = df.loc[8].to_json(orient="records")
+    
+    
+    code_file_name = df.loc[8].CodeFile
+    st.markdown(code_file_name)
+    error_line_num = json.loads(df.loc[8].StackTrace)[0]['line']
+    st.markdown(error_line_num)
+
+    
+    prompt = f"""
+    You are an expert software engineer analyzing an exception record from a production environment. Your job is to reason through the failure, provide actionable resolution steps, and suggest a direct fix if relevant code is available.
+
+    Please structure your response as follows:
+
+    ---
+
+    ### Root Cause Analysis
+
+    Based on the stack trace and exception data provided below, explain in detail why this exception is occurring. Include reasoning based on stack trace level[0], error messages, and any environment clues.
+
+    ---
+
+    ### Resolution Steps
+
+    List 2–3 potential resolutions to fix this issue. Include short justifications for each option.
+
+    ---
+
+    ### Exception Record
+
+    {data_json}
+
     """
-    A generator class for producing synthetic tabular data using LLM prompts.
-    Extends the BaseSyntheticGenerator with tabular-specific logic, including
-    adaptive batch sizing based on token estimation.
+
+    if not pd.isna(code_file_name):
+        # numbered_code = add_line_numbers(read_txt_file(code_file_name))  # This is a utility you should implement
+        extract_method = extract_method_by_line_number(read_txt_file(code_file_name), error_line_num)
+        prompt += f"""
+
+    ---
+
+    ###  Relevant Code File (`{code_file_name}`)
+
+    Below is the code from the file mentioned in the stack trace. Line numbers are included for precise reference.
+
+    [[code]]
+    {extract_method}
+    [[/code]]
+
+    ---
+
+    ### Code Fix Suggestion
+
+    Based on the above code, the file name and line number from `stacktrace[0]`, suggest a specific **code fix**. 
+
+    Format your answer as:
+
+    - **Affected Line Number**: `Line X`
+    - **Problem**: Briefly describe the issue.
+    - **Suggested Fix**: Show the corrected version of that line or a small code block (max 5 lines) if necessary.
+    - **Reasoning**: Explain *why* this fix works.
+
+    Avoid patch/diff formats. Show complete lines instead.
+
     """
-    column_names = ""
-    def __init__(self):
-        """
-        Initializes the TabularDataGenerator class.
-        - Calls the parent class constructor with the data category set to "tabular".
-        - Sets up logging for this class instance.
-        - Initializes the TokenEstimator for adaptive batching.
-        - Initializes a parser for interpreting structured JSON outputs from the LLM.
-        """
-        super().__init__(data_category=DATA_CATEGORY.TABULAR.value)
-        self.logger = logging.getLogger(__name__)
-        self.token_estimator = TokenEstimator()
-        self.parser = JsonOutputParser()
-
-    def extract_json_from_response(self, response_text: str):
-        """
-        Safely extracts JSON from an LLM response even if it's wrapped in Markdown or contains additional text.
-        Detects truncation and logs appropriately.
-        """
-        try:
-            # First: try to extract Markdown-style JSON
-            json_match = re.search(r'```json\s*(.*?)\s*```', response_text, re.DOTALL)
-            if json_match:
-                json_str = json_match.group(1)
-            else:
-                # Fallback: try to extract direct JSON array
-                json_match = re.search(r'(\[\s*{.*?}\s*\])', response_text, re.DOTALL)
-                json_str = json_match.group(1) if json_match else response_text.strip()
-
-            # Optional: basic truncation check
-            if not json_str.strip().endswith(("]", "}")):
-                self.logger.warning("Possible output truncation detected: JSON does not end with expected character.")
-
-            # Optional: attempt to auto-close the array (only if it *looks* like it's truncated)
-            if json_str.count("{") > json_str.count("}"):
-                self.logger.warning("Attempting to fix incomplete JSON object.")
-                json_str += "}" * (json_str.count("{") - json_str.count("}"))
-
-            if json_str.count("[") > json_str.count("]"):
-                self.logger.warning("Attempting to fix incomplete JSON array.")
-                json_str += "]" * (json_str.count("[") - json_str.count("]"))
-
-            return json.loads(json_str)
-
-        except json.JSONDecodeError as e:
-            self.logger.error(f"JSON parsing failed: {e}")
-            self.logger.error(f"Failed content: {json_str[:500]}...")
-            return [] 
-        
-    # def generate_synthetic_data(self, data_category: str, user_query: str, num_samples: int,
-    #                             realism_level: str, column_names: str, field_description: str, max_length: int,
-    #                             domain: str, feature_types: str, feature_distributions: str,
-    #                             relationships_constraints: str, output_format: str, schema_details: dict):
-    #     """
-    #      Generates synthetic tabular data using a language model based on the provided schema and generation parameters.
-
-    #     This method handles:
-    #     - Prompt template initialization.
-    #     - Token estimation for schema and prompt.
-    #     - Adaptive batch size calculation based on token limits.
-    #     - Batched generation and parsing of results.
-    #     - Deduplication and metrics tracking.
-
-    #     Args:
-    #         data_category (str): The category of data being generated (e.g., 'tabular').
-    #         user_query (str): A user-provided description of the data to be generated.
-    #         num_samples (int): Total number of synthetic records to generate.
-    #         realism_level (str): The desired level of realism for the generated data.
-    #         column_names (str): Column names of the tabular data.
-    #         field_description (str): Descriptions of the fields (columns).
-    #         max_length (int): Maximum character length allowed for field values.
-    #         domain (str): The domain context for the data (e.g., finance, healthcare).
-    #         feature_types (str): Types of features (e.g., categorical, numerical).
-    #         feature_distributions (str): Distribution types of features (e.g., normal, uniform).
-    #         relationships_constraints (str): Constraints or relationships between fields.
-    #         output_format (str): The desired output format (e.g., JSON, CSV).
-    #         schema_details (dict): Detailed schema metadata including column info and constraints.
-
-    #     Returns:
-    #         list: A list of generated synthetic records formatted according to the output format.
-    #     """
-    #     self.initialize_prompt_template(column_names, field_description, max_length,domain, feature_types, 
-    #                                     feature_distributions, relationships_constraints, schema_details)
-    #     all_data, seen_rows = [], set()
-    #     metrics = self.initialize_metrics()
-
-    #     # Estimate tokens
-    #     schema_tokens = self.token_estimator.estimate_tokens_for_schema(schema_details)
-    #     self.token_estimator.log_token_usage(json.dumps(schema_details), label="Schema")
-    #     prompt_sample = self.build_prompt(user_query, 1, realism_level, column_names,
-    #                                       field_description, max_length, domain, feature_types,
-    #                                       feature_distributions, relationships_constraints, output_format,
-    #                                       schema_details)
-    #     prompt_tokens = self.token_estimator.log_token_usage(prompt_sample, label="Prompt Sample")
-
-    #     dynamic_batch_size = self.token_estimator.get_dynamic_batch_size(schema_tokens, prompt_tokens)
-    #     self.logger.info(f"Using adaptive batch size: {dynamic_batch_size}")
-
-    #     for i in range(0, num_samples, dynamic_batch_size):
-    #         batch_size = min(dynamic_batch_size, num_samples - i)
-    #         self.logger.info(f"Processing batch {i // dynamic_batch_size + 1} with {batch_size} records")
-
-    #         prompt = self.build_prompt(user_query, batch_size, realism_level, column_names,
-    #                                    field_description, max_length, domain, feature_types,
-    #                                    feature_distributions, relationships_constraints, output_format,
-    #                                    schema_details)
-
-    #         batch_data, batch_metrics = self.generate_batch(prompt, seen_rows, i, batch_size)
-    #         all_data.extend(batch_data)
-    #         self.update_metrics(metrics, batch_metrics)
-
-    #     return self.finalize_generation(all_data, metrics)
-
-   
-
-
-    def generate_synthetic_data(self, data_category: str, user_query: str, num_samples: int,
-                                realism_level: str, column_names: str, field_description: str, max_length: int,
-                                domain: str, feature_types: str, feature_distributions: str,
-                                relationships_constraints: str, output_format: str, schema_details: dict):
-        """
-        Generates synthetic tabular data using a language model with parallelized batch processing.
-        Includes detailed logging for batch-level threading and timing.
-        """
-
-        self.initialize_prompt_template(column_names, field_description, max_length, domain,
-                                        feature_types, feature_distributions,
-                                        relationships_constraints, schema_details)
-
-        all_data, seen_rows = [], set()
-        metrics = self.initialize_metrics()
-
-        # Estimate tokens
-        schema_tokens = self.token_estimator.estimate_tokens_for_schema(schema_details)
-        self.token_estimator.log_token_usage(json.dumps(schema_details), label="Schema")
-
-        prompt_sample = self.build_prompt(user_query, 1, realism_level, column_names,
-                                        field_description, max_length, domain, feature_types,
-                                        feature_distributions, relationships_constraints, output_format,
-                                        schema_details)
-        prompt_tokens = self.token_estimator.log_token_usage(prompt_sample, label="Prompt Sample")
-
-        dynamic_batch_size = self.token_estimator.get_dynamic_batch_size(schema_tokens, prompt_tokens)
-        self.logger.info(f"[Main] Using adaptive batch size: {dynamic_batch_size}")
-
-        futures = []
-        results = []
-
-        overall_start = time.perf_counter()
-
-        def batch_wrapper(prompt, batch_index, start_idx, batch_size, seen_rows_copy):
-            thread_name = f"Batch-{batch_index}"
-            start_time = datetime.now()
-            t0 = time.perf_counter()
-            self.logger.info(f"[{thread_name}] Started at {start_time.strftime('%H:%M:%S.%f')[:-3]}")
-
-            result = self.generate_batch(prompt, seen_rows_copy, start_idx, batch_size)
-
-            end_time = datetime.now()
-            t1 = time.perf_counter()
-            self.logger.info(f"[{thread_name}] Finished at {end_time.strftime('%H:%M:%S.%f')[:-3]} "
-                            f"(Duration: {t1 - t0:.2f}s)")
-            return result
-
-        with ThreadPoolExecutor(max_workers=4) as executor:
-            for i in range(0, num_samples, dynamic_batch_size):
-                batch_index = i // dynamic_batch_size + 1
-                batch_size = min(dynamic_batch_size, num_samples - i)
-
-                self.logger.info(f"[Main] Submitting batch {batch_index} with {batch_size} records")
-
-                prompt = self.build_prompt(user_query, batch_size, realism_level, column_names,
-                                        field_description, max_length, domain, feature_types,
-                                        feature_distributions, relationships_constraints, output_format,
-                                        schema_details)
-
-                future = executor.submit(batch_wrapper, prompt, batch_index, i, batch_size, seen_rows.copy())
-                futures.append(future)
-
-            for future in as_completed(futures):
-                batch_data, batch_metrics = future.result()
-                all_data.extend(batch_data)
-                self.update_metrics(metrics, batch_metrics)
-
-        overall_end = time.perf_counter()
-        self.logger.info(f"[Main] All batches completed in {overall_end - overall_start:.2f}s")
-
-        return self.finalize_generation(all_data, metrics)
-    def initialize_prompt_template(self, column_names, field_description, max_length,
-                               domain, feature_types, feature_distributions, relationships_constraints, schema_details):
-        """
-        Initializes the prompt template and context for tabular data generation.
-        This method prepares the reusable prompt template that will be used to generate LLM prompts.
-        It sets up the structure of the prompt using the input variables, format instructions,
-        and user-provided schema context.
-
-        Args:
-            column_names (str): Names of the columns in the tabular data.
-            field_description (str): Description for each column/field.
-            max_length (int): Maximum allowed character length per field.
-            domain (str): Domain context of the dataset (e.g., retail, finance).
-            feature_types (str): Types of features (e.g., numerical, categorical).
-            feature_distributions (str): Statistical distributions expected in the features.
-            relationships_constraints (str): Logical or statistical relationships among features.
-            schema_details (dict): Full schema metadata including constraints and descriptions.
-
-        Returns:
-            None
-        """
-        self.prompt_template = PromptTemplate(
-            template=self.prompt_template[TDC_VARIABLES.YAML_FILE_NAME],
-            input_variables=[
-                TDC_VARIABLES.USER_REQUEST, GENERIC_VARIABLES.SAMPLE_COUNT, GENERIC_VARIABLES.REALISM_LEVEL,
-                TDC_VARIABLES.COLUMN_NAMES, TDC_VARIABLES.FIELD_DESCRIPTION, TDC_VARIABLES.MAX_LENGTH,
-                GENERIC_VARIABLES.DOMAIN, TDC_VARIABLES.FEATURE_TYPES, TDC_VARIABLES.FEATURE_DISTRIBUTION,
-                TDC_VARIABLES.RELATIONSHIP_CONSTRAINTS, GENERIC_VARIABLES.OUTPUT_FORMAT,
-                TDC_VARIABLES.SCHEMA_DETAILS
-            ],
-            partial_variables={"format_instructions": self.parser.get_format_instructions()},
-        )
-        self.prompt_context = {
-            "column_names": column_names,
-            "field_description": field_description,
-            "max_length": max_length,
-            "domain": domain,
-            "feature_types": feature_types,
-            "feature_distributions": feature_distributions,
-            "relationships_constraints": relationships_constraints,
-            "schema_details": schema_details
-        }
-
-    def initialize_metrics(self):
-        """
-        Initializes the prompt template and context for tabular data generation.
-        This method prepares the reusable prompt template that will be used to generate LLM prompts.
-        It sets up the structure of the prompt using the input variables, format instructions,
-        and user-provided schema context.
-        Args:
-            column_names (str): Names of the columns in the tabular data.
-            field_description (str): Description for each column/field.
-            max_length (int): Maximum allowed character length per field.
-            domain (str): Domain context of the dataset (e.g., retail, finance).
-            feature_types (str): Types of features (e.g., numerical, categorical).
-            feature_distributions (str): Statistical distributions expected in the features.
-            relationships_constraints (str): Logical or statistical relationships among features.
-            schema_details (dict): Full schema metadata including constraints and descriptions.
-        Returns:
-            None
-        """
-        return {
-            "total_generated": 0,
-            "duplicate_count": 0,
-            "skipped_batches": 0,
-            "cumulative_retries": 0,
-            "batch_counts": 0,
-        }
     
-    def build_prompt(self, user_query, batch_size, realism_level, column_names,field_description, max_length, 
-                      domain, feature_types,feature_distributions, relationships_constraints, output_format,
-                      schema_details):
-        """
-        Builds a formatted prompt string for the synthetic data generation request.
-        This method constructs a prompt by formatting a predefined template with the provided 
-        parameters, which are used to generate synthetic tabular data. The prompt is tailored 
-        based on user input, schema details, and various configuration options.
 
-        Parameters:
-            user_query (str): The query provided by the user to guide the data generation process.
-            batch_size (int): The number of samples to generate in this batch.
-            realism_level (str): The desired realism level of the generated data.
-            column_names (str): A list of column names to include in the generated data.
-            field_description (str): Descriptions of the fields to provide context for the generated data.
-            max_length (int): The maximum length for text fields in the generated data.
-            domain (str): The domain or context in which the data should fit (e.g., "finance").
-            feature_types (str): The types of features to generate (e.g., "integer", "string").
-            feature_distributions (str): The distribution types for the generated features (e.g., "normal", "uniform").
-            relationships_constraints (str): Constraints related to the relationships between fields (e.g., "parent-child").
-            output_format (str): The desired output format for the generated data (e.g., "JSON", "CSV").
-            schema_details (dict): A dictionary containing details about the schema, such as column specifications.
-        Returns:
-            str: The formatted prompt string ready to be sent to the data generation model.
-        Logs the token usage for the generated prompt using the `TokenEstimator` class to ensure the token count is tracked.
-        """
-            
-        prompt = self.prompt_template.format(
-                            user_request=user_query,
-                            num_samples=batch_size,
-                            realism_level=realism_level.strip(),
-                            column_names=column_names,
-                            field_description=field_description,
-                            max_length=max_length,
-                            domain=domain,
-                            feature_types=feature_types,
-                            feature_distributions=feature_distributions,
-                            relationships_constraints=relationships_constraints,
-                            output_format=output_format,
-                            schema_details=json.dumps(schema_details)
-                        )
-        self.token_estimator.log_token_usage(prompt, label="Prompt")
-        return prompt
-    
-    def generate_batch(self, prompt, seen_rows, batch_index, batch_size):
-        """
-        Generates a batch of synthetic tabular records using the language model and handles retries and deduplication.
+    response = azure_gpt.invoke(prompt)
+    response_text = response.content if hasattr(response, "content") else str(response)
+    formatted_sections = format_gpt_output(response_text)
 
-        This method sends a formatted prompt to the language model to generate synthetic data. It includes:
-        - Retry logic with exponential backoff for robustness.
-        - Token usage logging for the model response.
-        - Deduplication to ensure only unique records are kept.
-        - Metric tracking for monitoring generation quality.
+    # Display sections one after the othe
+    for title, content in formatted_sections:
+        st.markdown(f"### {title}")
+        st.markdown(content)
+        st.markdown("---")
 
-        Parameters:
-            prompt (str): The prompt string to be sent to the language model.
-            seen_rows (set): A set of previously seen records used to filter out duplicates.
-            batch_index (int): The starting index of the batch within the total sample set.
-            batch_size (int): The number of samples to generate in the batch.
+    # print(f"GPT Insights for {df.loc[8]}\n", response)
 
-        Returns:
-            tuple:
-                - List[dict]: Unique synthetic records generated in this batch.
-                - dict: Batch-level metrics including:
-                    - "new_records" (int): Number of unique records generated.
-                    - "duplicates" (int): Number of duplicates identified in the batch.
-                    - "retries" (int): Number of retry attempts made during generation.
-                    - "skipped" (bool): Whether the batch was skipped due to persistent failures.
 
-        Notes:
-            - The method retries up to MAX_RETRIES times on failure or if only duplicate records are generated.
-            - Token usage for the LLM response is logged using `TokenEstimator`.
-            - Duplicate detection uses a set-based mechanism comparing record hashes or stringified values.
-        """
-        retry_count = 0
-        batch_metrics = {
-            "new_records": 0,
-            "duplicates": 0,
-            "retries": 0,
-            "skipped": False
-        }
+def format_gpt_output(response):
+    # Remove unnecessary headers and split into sections    
+    sections = re.split(r"###\s+", response)
+    formatted_sections = []
+    for section in sections:
+        if not section.strip():
+            continue
+        lines = section.strip().split("\n")
+        title = lines[0].strip()
+        content = "\n".join(lines[1:]).strip()
+        # Convert numbered or dash lists to markdown bullets
+        content = re.sub(r"^\s*-\s+", "- ", content, flags=re.MULTILINE)
+        content = re.sub(r"^\s*\d+\.\s+", "- ", content, flags=re.MULTILINE)
+        formatted_sections.append((title, content))
+    return formatted_sections
 
-        while retry_count < MAX_RETRIES:
-            try:
-                start_time = time.time()
-                response = self.exponential_backoff_retry(lambda: self.llm_model.invoke([HumanMessage(content=prompt)]))
-                if isinstance(response, tuple): 
-                    response = response[0]
-                self.token_estimator.log_token_usage(response.content, label="LLM Response")
 
-                parsed_data = self.extract_json_from_response(response.content)
-                unique_records, duplicate_count = self.deduplicate(parsed_data, seen_rows)
-
-                if unique_records:
-                    batch_metrics["new_records"] = len(unique_records)
-                    batch_metrics["duplicates"] = duplicate_count
-                    return unique_records, batch_metrics
-                else:
-                    self.logger.warning(f"No unique records in batch {batch_index // batch_size + 1}")
-                    retry_count += 1
-                    batch_metrics["retries"] += 1
-            except Exception as e:
-                self.logger.error(f"Error generating batch {batch_index // batch_size + 1}: {e}")
-                retry_count += 1
-                batch_metrics["retries"] += 1
-
-        batch_metrics["skipped"] = True
-        return [], batch_metrics
-    
-    def deduplicate(self, parsed_data, seen_rows):
-        """
-        Removes duplicate records from parsed data based on hash comparison.
-
-        Parameters:
-            parsed_data (list): List of generated records (typically dictionaries).
-            seen_rows (set): Set of hashes representing previously seen records.
-
-        Returns:
-            tuple:
-                - List[dict]: Unique records from the batch.
-                - int: Number of duplicate records found and skipped.
-        """
-        unique_records = []
-        duplicate_count = 0
-        for record in parsed_data:
-            row_hash = sha256(json.dumps(record, sort_keys=True).encode()).hexdigest()
-            if row_hash not in seen_rows:
-                seen_rows.add(row_hash)
-                unique_records.append(record)
-            else:
-                duplicate_count += 1
-        return unique_records, duplicate_count
-    
-    def update_metrics(self, metrics, batch_metrics):
-        """
-        Updates the global generation metrics with the results from a single batch.
-
-        Parameters:
-            metrics (dict): The cumulative metrics being tracked for the full generation.
-            batch_metrics (dict): The metrics returned from the latest batch generation.
-        """
-        metrics["total_generated"] += batch_metrics["new_records"]
-        metrics["duplicate_count"] += batch_metrics["duplicates"]
-        metrics["cumulative_retries"] += batch_metrics["retries"]
-        if batch_metrics["new_records"] > 0:
-            metrics["batch_counts"] += 1
-        if batch_metrics["skipped"]:
-            metrics["skipped_batches"] += 1
-
-    def finalize_generation(self, all_data, metrics):
-        """
-        Removes duplicate records from parsed data based on hash comparison.
-
-        Parameters:
-            parsed_data (list): List of generated records (typically dictionaries).
-            seen_rows (set): Set of hashes representing previously seen records.
-
-        Returns:
-            tuple:
-                - List[dict]: Unique records from the batch.
-                - int: Number of duplicate records found and skipped.
-        """
-        if not all_data:
-            self.logger.error("No valid data generated.")
-            return None
-
-        df = pd.DataFrame(all_data)
-        avg_per_batch = metrics["total_generated"] / metrics["batch_counts"] if metrics["batch_counts"] else 0
-
-        self.logger.info(f"Final DataFrame with {len(df)} records.")
-        self.logger.info(f"Total {metrics['total_generated']} unique records generated.")
-        self.logger.info(f"Total {metrics['duplicate_count']} duplicate records skipped.")
-        self.logger.info(f"{metrics['skipped_batches']} batches failed.")
-        self.logger.info(f"Average records per batch: {avg_per_batch:.2f}")
-        self.logger.info(f"Cumulative retry count: {metrics['cumulative_retries']}")
-
-        return df,metrics["total_generated"]
-    
-    def save_generated_data(self, df, base_filename: str,output_format:str):
-        """
-        Save the generated tabular data in multiple formats using the base class logic.
-
-        Args:
-            df (pd.DataFrame): DataFrame containing the generated synthetic data.
-            base_filename (str): Base name for the output file.
-            output_format (str): Desired output format (e.g., CSV, JSON, Parquet).
-        """
-
-        if df is not None and (not hasattr(df, "empty") or not df.empty):
-            self.save_output(df, base_filename,output_format)
-            self.logger.info(f"Synthetic Tabular data saved successfully")
+# Submit button
+if st.button("Generate Summary"):
+    if uploaded_file is not None:
+        file_name = uploaded_file.name
+        if file_name.endswith(".csv"):
+            df = pd.read_csv(uploaded_file)
+            st.success("CSV file uploaded successfully!")
+        elif file_name.endswith((".xls", ".xlsx")):
+            df = pd.read_excel(uploaded_file)
+            st.success("Excel file uploaded successfully!")
         else:
-            self.logger.error("No data to save.")
+            st.error("Unsupported file type.")
+            df = None
+
+        if "df" in locals() and df is not None:
+            generate_summary(df)
+    else:
+        st.warning("Please upload a file before submitting.")
