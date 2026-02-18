@@ -1,0 +1,76 @@
+"In the historical evolution of human tools, what is considered the 'language to control machines and automate intelligence'?",Programming
+"During the 1940s–1950s, which machine was known as the first programmable computer?",ENIAC
+"Which decade is associated with the rise of structured languages like C, COBOL, and BASIC?",1960s–1980s
+The Internet revolution of the 1990s–2000s saw the rise of which three major languages?,"Java, PHP, and Python"
+What is the primary focus of the programming era starting from 2010 to the present day?,Data and AI revolution (powering Machine Learning and analytics)
+Programming acts as a bridge between human thought and _____.,Machine action
+How does programming add value regarding repetitive tasks?,It automates them to save time and effort.
+Which specific programming solution addresses the problem of 'human errors'?,Logical algorithms and testing
+"In the Zomato 'Order Now' example, which two languages coordinate the backend processes in milliseconds?",Python and Java
+How is Python used in the field of Healthcare?,AI is used to predict diseases from medical scans.
+What is the primary use of Python at NASA?,Space mission simulations and automation
+Why is Python described as having high 'readability'?,Its syntax is close to English with minimal punctuation and complex symbols.
+Identify the data science libraries associated with Python.,"Pandas, NumPy, Scikit-learn, and TensorFlow"
+Which web development frameworks are commonly used with Python?,Flask and Django
+What makes Python a 'cross-platform' language?,"It runs on Windows, macOS, Linux, and IoT devices without modification."
+Why is Python referred to as the 'glue language' of modern systems?,"It easily integrates with databases, APIs, cloud platforms, and other languages."
+How does the learning curve of Python compare to C++?,"Python is considered easy and beginner-friendly, whereas C++ is considered hard."
+How does Netflix utilize Python?,For recommendation algorithms using machine learning
+Which Python function is traditionally used for the 'first handshake' between a programmer and a computer?,`print()`
+"In the code `print(""Hello, World!"")`, what is the technical term for the message inside the quotes?",String literal
+What is the default formatting behaviour when multiple `print()` functions are called sequentially?,Each message is automatically printed on a new line.
+What role does the Python 'Interpreter' play during code execution?,It reads and executes the code line by line.
+Define 'Bytecode' in the context of Python execution.,"An intermediate, internal language format that Python converts human-readable code into before running."
+What is the function of the Python Virtual Machine (PVM)?,It is the execution engine that reads bytecode and performs the actual tasks.
+"In the internal workflow of Python, what happens immediately after the code is converted to bytecode?",The bytecode is executed by the Python Virtual Machine (PVM).
+What is a 'variable' in Python?,A name that refers to a value stored in the computer's memory.
+Python detects data types automatically without explicit declaration; what is this concept called?,Dynamic typing
+"According to the naming rules, what must a Python variable name start with?",A letter or an underscore
+Why is `1value` an invalid variable name in Python?,Variable names cannot start with a number.
+Explain the case-sensitivity of Python variables using the example 'Name'.,`Name` is not equal to `name`; they are treated as two different variables.
+Which naming convention is recommended for Python variables to ensure clean code?,snake_case
+What naming convention is typically used for constants in Python?,UPPER_CASE
+"In the 'wooden box' analogy, what does the label represent?",The variable name
+What is the purpose of the `type()` function in Python?,To identify the data type of a specific variable or value.
+Which primary data type is used for whole numbers without decimals?,int
+What data type is assigned to a variable representing logical values like `True` or `False`?,bool
+"Which data type consists of real and imaginary parts, such as `2 + 3j`?",complex
+Define 'Implicit Type Conversion'.,Python automatically converting one data type to another to prevent data loss.
+What is 'Type Casting' in Python?,The manual conversion of a data type by the programmer using built-in functions.
+What is the result of the explicit cast `int(3.9)`?,3
+Which function converts a value into a string?,`str(x)`
+What is a Python String?,"A sequence of characters enclosed in single, double, or triple quotes."
+"When are triple quotes (`'''` or `""""""`) specifically used for creating strings?",For multi-line strings or docstrings.
+What index number represents the first character in a Python string?,0
+"In string indexing, what does the index `-1` represent?",The last character of the string.
+"In the slicing syntax `String[start:end:step]`, what is the rule regarding the `end` index?",The character at the `end` index is excluded from the slice.
+What does the `step` parameter control in string slicing?,The number of characters to skip while extracting the substring.
+Which Python expression reverses a string named `text`?,`text[::-1]`
+What is string 'Concatenation'?,The process of joining two or more strings together using the `+` operator.
+"What is the output of the string operation `""Hi"" * 3`?",'HiHiHi'
+Which function is used to find the total number of characters in a string?,`len()`
+What does the string method `.strip()` perform?,It removes leading and trailing spaces from the string.
+How do string methods behave regarding the original string?,They do not change the original string because strings are immutable; they return a new string.
+Which escape character represents a new line?,`\n`
+Which escape character is used to insert a tab space?,`\t`
+What is the modern and recommended method for string formatting in Python 3.6+?,f-Strings
+"In an f-String, how are variables or expressions embedded within the text?",They are placed inside curly braces `{ }`.
+Define 'Immutability' in the context of Python strings.,"Once a string is created, its individual characters cannot be changed directly."
+How can you 'modify' a string if they are immutable?,By creating a new string that combines parts of the old one with new characters.
+What is the primary syntax difference between a List and a Tuple?,Lists use square brackets `[ ]` while Tuples use parentheses `( )`.
+Compare the mutability of Lists and Tuples.,Lists are mutable (can be changed); Tuples are immutable (cannot be changed).
+Which List method adds an element to the very end of the collection?,`.append(x)`
+What is the difference between `.append()` and `.insert()`?,"`.append()` adds an item to the end, while `.insert()` adds an item at a specific index."
+Which List method removes and returns the last item by default?,`.pop()`
+What does the `.sort()` method do to a list?,It arranges the elements in ascending order.
+Which Tuple method returns the number of times a specific value appears?,`.count(x)`
+What does the Tuple method `.index(x)` return?,The first index position where the value `x` is found.
+How can you find the largest value in a Tuple named `nums`?,`max(nums)`
+Under what circumstances should a Tuple be used instead of a List?,When the data is constant and should not be altered (e.g. days of the week).
+Which data type has better performance (speed) in Python: List or Tuple?,Tuple
+What is the result of the Python expression `bool(0)`?,False
+"What is the result of the Python expression `bool("""")`?",False
+Which symbol is used for single-line comments in Python?,`#`
+What is the default return data type of the `input()` function?,str
+What is the difference between the `=` and `==` operators?,"`=` is used for assignment, while `==` is used for comparison."
+Why is indentation essential in Python?,It is used to define the structure and scope of code blocks.
