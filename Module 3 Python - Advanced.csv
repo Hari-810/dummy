@@ -1,1 +1,76 @@
-
+"In Python, how are values assigned to parameters when using positional arguments?",Values are assigned based on the order in which they are passed.
+What is the primary risk of using positional arguments if the order of inputs is swapped?,"The function will assign values to the wrong parameters, leading to incorrect output or errors."
+How does a developer explicitly assign a value to a parameter regardless of its position?,By using keyword arguments (specifying the parameter name while passing the value).
+What is the benefit of using keyword arguments regarding code safety?,They protect the program from positional mistakes and improve readability.
+"In function definitions, what are parameters with predefined values called?",Default arguments.
+What happens when a caller omits a value for a parameter that has a default argument?,The function automatically uses the predefined default value.
+Which syntax is used to allow a function to accept an arbitrary number of positional arguments?,The `*args` syntax.
+"Internally, how does Python store the multiple inputs passed through `*args`?",They are stored as a tuple.
+Which syntax allows a function to accept multiple named (key-value) inputs?,The `**kwargs` syntax.
+What data structure does Python use to manage inputs passed via `**kwargs`?,A dictionary.
+What is the mandatory order when combining different argument types in a single function?,Positional arguments $\rightarrow$ `*args` $\rightarrow$ keyword arguments $\rightarrow$ `**kwargs`.
+What does it mean for functions to be 'first-class citizens' in Python?,"They can be stored in variables, passed as arguments, or returned from other functions."
+Which programming concept is supported by the ability to pass functions as arguments?,Functional programming (also the foundation for decorators and callbacks).
+How can multiple functions be stored and executed sequentially in a loop?,By placing function names into a list or dictionary and iterating through them.
+What is a 'Lambda function' in Python?,"A small, anonymous function defined without a name using the `lambda` keyword."
+What is the basic syntax for defining a lambda function?,`lambda arguments : expression`
+What is a major structural restriction of a lambda function compared to a standard function?,It can only contain a single expression and no statements or loops.
+True or False: Lambda functions require an explicit `return` keyword.,False; the result of the expression is automatically returned.
+When are lambda functions typically used in practice?,"For short-lived, temporary operations passed to other functions like `map()` or `filter()`."
+What is the purpose of the `map()` function?,To apply a specific function to every element within an iterable.
+What type of object does the `map()` function return?,"A map object, which is an iterator."
+How can the parallel processing of two lists be achieved using `map()`?,By passing both lists as iterables and a function that accepts two arguments.
+Which function is used to select elements from a sequence based on a condition?,The `filter()` function.
+What logic determines whether an element is included in the output of a `filter()` operation?,The element is included only if the provided function returns `True` for that element.
+"In the data transformation trio, what is the 'photocopier' analogy for `map()`?",It applies the same change to every 'page' (element) in the collection.
+How can `map()` and `filter()` be combined to process even numbers only?,"Use `filter()` to select even numbers, then wrap it in `map()` to transform them."
+What is 'List Comprehension' in Python?,"A concise, one-line method for creating or modifying lists from iterables."
+What is the general syntax for a list comprehension?,`[expression for item in iterable if condition]`
+"In a list comprehension, what part represents the operation performed on each element?",The expression.
+How does list comprehension compare to a traditional `for` loop in terms of performance?,It is generally faster because it is optimised internally within Python.
+How can an 'if-else' logic be implemented within a list comprehension?,"By placing the conditional expression before the `for` loop (e.g., `[x if condition else y for x in list]`)."
+What is a 'nested list comprehension'?,"A comprehension that uses nested loops, often used for flattening matrices or creating coordinate pairs."
+Term: Regular Expression (RegEx),"Definition: A sequence of characters defining a search pattern for text matching, extraction, or replacement."
+Which Python module must be imported to work with Regular Expressions?,The `re` module.
+What is the difference between `re.match()` and `re.search()`?,"`re.match()` checks only at the beginning of the string, while `re.search()` scans the entire string."
+Which `re` function returns all occurrences of a pattern as a list?,`re.findall()`
+What is the purpose of the `re.sub()` function?,To replace matches of a pattern with a specified new string.
+How does `re.split()` differ from the standard string `.split()` method?,It can split text based on complex RegEx patterns (like any whitespace or punctuation).
+"In RegEx, what does the dot `.` metacharacter match?",Any single character except for a newline.
+Which RegEx symbols represent the start and end of a string respectively?,The caret `^` (start) and dollar sign `$` (end).
+What is the difference between the `*` and `+` quantifiers in RegEx?,"`*` matches 0 or more occurrences, whereas `+` matches 1 or more occurrences."
+"How do you specify a range of occurrences (e.g., exactly three) in RegEx?",By using curly braces `{3}`.
+Which RegEx metacharacter makes the preceding character optional (0 or 1 occurrence)?,The question mark `?`.
+What does the character class `\d` represent in a RegEx pattern?,Any digit from 0 to 9.
+"In RegEx, what is the difference between `\w` and `\W`?","`\w` matches word characters (letters, numbers, underscores), while `\W` matches non-word characters."
+What does the code `\s` match in a string?,"Any whitespace character (space, tab, newline)."
+Why should 'raw strings' (prefix `r`) be used for RegEx patterns in Python?,To prevent Python from interpreting backslashes as standard escape sequences (like `\n`).
+What is the purpose of the `\b` shortcut in Regular Expressions?,"It indicates a word boundary, ensuring a match occurs only at the start or end of a word."
+How is a 'set of characters' defined in a RegEx pattern?,"By using square brackets `[]` (e.g., `[A-Z]` for any uppercase letter)."
+"The process of identifying, understanding, and fixing errors in a program is called _____.",Debugging
+What is a 'Syntax Error'?,An error that occurs when Python cannot parse the code because it violates language rules.
+What defines a 'Runtime Error' or 'Exception'?,An error that occurs during program execution despite the syntax being correct.
+Term: Logical Error,Definition: A mistake where the program runs without crashing but produces incorrect or unexpected results.
+Which debugging technique is more professional than `print()` for large applications?,Logging (using the `logging` module).
+What is a 'Breakpoint' in an IDE debugger?,A designated point where code execution pauses to allow a developer to inspect variable values.
+Which Python structure is used to handle exceptions gracefully without crashing?,The `try-except` block.
+"In a `try-except` statement, when does the `else` block execute?",It executes only if no exceptions were raised in the `try` block.
+What is the function of the `finally` block in error handling?,"It always executes at the end, regardless of whether an error occurred, typically for cleanup."
+Which keyword allows a developer to intentionally trigger a specific exception?,The `raise` keyword.
+What is the base class for all built-in exceptions in Python?,The `Exception` class.
+Which built-in function is used to open a file for manipulation in Python?,The `open()` function.
+"In file handling, what does the `'w'` mode do if the file already exists?","It overwrites the existing file, causing all previous data to be lost."
+Which mode should be used to add data to a file without deleting its current contents?,The append mode (`'a'`).
+What is the purpose of the `'x'` file mode?,To create a new file; it returns an error if the file already exists.
+What is the difference between `file.read()` and `file.readlines()`?,"`read()` returns the whole content as one string, while `readlines()` returns a list of strings (one per line)."
+Why is the `with` statement preferred over manually calling `file.close()`?,It automatically manages file closure even if an exception occurs during execution.
+"Which suffix is added to a mode (e.g., `'rb'`) to work with non-text files like images?","The `'b'` character, representing binary mode."
+Which module is designed for reading and writing spreadsheets in comma-separated format?,The `csv` module.
+What error is raised if a program attempts to open a file that does not exist in the specified path?,A `FileNotFoundError`.
+"When using `csv.writer`, which method is used to add a single list of data as a row?",`writerow()`
+What is the effect of the `strip()` method when reading lines from a file?,It removes extra newline characters (trailing whitespace) from the string.
+Formula: Square of even numbers using list comprehension,`[x**2 for x in range(n) if x % 2 == 0]`
+Concept: Word Boundary in RegEx,"Shortcut: `\b`. Purpose: Ensures the pattern matches as a whole word, not as part of another word."
+How can you catch any generic error during testing without specifying a type?,Using `except Exception as e:`.
+"In a `try` block, what happens to the remaining code if an exception is raised on the first line?","The remaining lines in the `try` block are skipped, and execution moves to the `except` block."
+What is the purpose of the `'r+'` mode in file operations?,It allows the file to be both read from and written to simultaneously.
